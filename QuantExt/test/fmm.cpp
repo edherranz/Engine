@@ -1372,6 +1372,87 @@ BOOST_AUTO_TEST_CASE(testLsmBermudanVsLgmGrid) {
                         "lsm vs grid: " << res.lowerBound - gridPrice << " outside " << bound);
 }
 
+BOOST_AUTO_TEST_CASE(testLsmDualBoundBermudan) {
+    BOOST_TEST_MESSAGE("A4 acceptance 4: Andersen-Broadie dual upper bound and duality gap for the "
+                       "replication-mode Bermudan vs the LGM grid price...");
+    // same replication setup as testLsmBermudanVsLgmGrid
+    const Date asof(19, September, 2026);
+    Settings::instance().evaluationDate() = asof;
+    Handle<YieldTermStructure> curve(
+        QuantLib::ext::make_shared<FlatForward>(0, NullCalendar(), 0.03, Actual365Fixed()));
+    const Actual365Fixed dc;
+    const Date end = asof + Period(5, Years);
+    const Schedule quarterly(asof, end, Period(3, Months), NullCalendar(), Unadjusted, Unadjusted,
+                             DateGeneration::Forward, false);
+    const Size M = quarterly.size() - 1;
+    Array rateTimes(M + 1);
+    for (Size k = 0; k <= M; ++k)
+        rateTimes[k] = dc.yearFraction(asof, quarterly[k]);
+    Array alphaTimes(3);
+    alphaTimes[0] = rateTimes[4];
+    alphaTimes[1] = rateTimes[8];
+    alphaTimes[2] = rateTimes[12];
+    Array alpha(4);
+    alpha[0] = 0.0090;
+    alpha[1] = 0.0110;
+    alpha[2] = 0.0100;
+    alpha[3] = 0.0095;
+    auto lgmParam = QuantLib::ext::make_shared<IrLgm1fPiecewiseConstantParametrization>(
+        EURCurrency(), curve, alphaTimes, alpha, Array(), Array(1, 0.01));
+    auto lgmModel = QuantLib::ext::make_shared<LinearGaussMarkovModel>(lgmParam);
+    auto fmmParam = QuantLib::ext::make_shared<FmmParametrization>(EURCurrency(), curve, rateTimes, lgmParam);
+    auto fmmModel = QuantLib::ext::make_shared<ForwardMarketModel>(fmmParam);
+    auto index = QuantLib::ext::make_shared<IborIndex>("FMMTEST", Period(3, Months), 0, EURCurrency(),
+                                                       NullCalendar(), Unadjusted, false, dc, curve);
+    const Schedule fixedSched(asof, end, Period(1, Years), NullCalendar(), Unadjusted, Unadjusted,
+                              DateGeneration::Forward, false);
+    const Schedule floatSched(asof, end, Period(3, Months), NullCalendar(), Unadjusted, Unadjusted,
+                              DateGeneration::Forward, false);
+    VanillaSwap probe(VanillaSwap::Payer, 1.0, fixedSched, 0.03, dc, floatSched, index, 0.0, dc);
+    probe.setPricingEngine(QuantLib::ext::make_shared<DiscountingSwapEngine>(curve));
+    const Real K = probe.fairRate();
+    std::vector<Date> exDates = {quarterly[4], quarterly[8], quarterly[12], quarterly[16]};
+    auto underlying = QuantLib::ext::make_shared<VanillaSwap>(VanillaSwap::Payer, 1.0, fixedSched, K, dc, floatSched,
+                                                              index, 0.0, dc);
+    auto swaption = QuantLib::ext::make_shared<Swaption>(
+        underlying, QuantLib::ext::make_shared<BermudanExercise>(exDates));
+    swaption->setPricingEngine(QuantLib::ext::make_shared<NumericLgmSwaptionEngine>(
+        Handle<LinearGaussMarkovModel>(lgmModel), 7.0, 100, 7.0, 100, curve));
+    const Real gridPrice = swaption->NPV();
+
+    FmmCallableInstrument inst;
+    inst.style = FmmCallableInstrument::Style::Enter;
+    fillPayerSwapFlows(inst, *fmmParam, 0, M, K);
+    for (const Size a : {4, 8, 12, 16})
+        inst.rights.push_back({a, a, 0.0});
+    for (Size j = 1; j <= 4; ++j) {
+        inst.floatWeights[j] = 0.0;
+        inst.fixedFlows[j] = 0.0;
+    }
+    FmmLsmConfig cfg;
+    cfg.trainingPaths = 32768;
+    cfg.valuationPaths = 32768;
+    FmmLsmPricer pricer(fmmModel, inst, cfg);
+    const auto lsm = pricer.calculate();
+    const auto dual = pricer.dualBound(1024, 128, 20260919);
+
+    BOOST_TEST_MESSAGE("DUALITY-GAP ROW | bermudan payer 5y annual-exercise (replication) | grid "
+                       << gridPrice << " | lower " << dual.lowerBound << " +/- " << dual.lowerBoundSe << " | upper "
+                       << dual.upperBound << " +/- " << dual.upperBoundSe << " | gap " << dual.gap << " +/- "
+                       << dual.gapSe << " (" << 100.0 * dual.gap / gridPrice << "% of value) | outer "
+                       << dual.outerPaths << " x inner " << dual.innerPaths << " | " << dual.runtimeSeconds
+                       << " s (lsm valuation " << lsm.lowerBound << ")");
+    // the true value (grid) must lie between the bounds within noise
+    BOOST_CHECK_MESSAGE(dual.upperBound > gridPrice - 3.0 * dual.upperBoundSe,
+                        "upper bound below grid price: " << dual.upperBound - gridPrice);
+    BOOST_CHECK_MESSAGE(dual.lowerBound < gridPrice + 3.0 * dual.lowerBoundSe,
+                        "lower bound above grid price: " << dual.lowerBound - gridPrice);
+    BOOST_CHECK_MESSAGE(dual.gap > -3.0 * dual.gapSe, "negative duality gap beyond noise: " << dual.gap);
+    // a policy this good should leave a small gap (reported; loose sanity bound 5% of value)
+    BOOST_CHECK_MESSAGE(dual.gap < 0.05 * gridPrice + 3.0 * dual.gapSe,
+                        "duality gap unexpectedly large: " << dual.gap);
+}
+
 BOOST_AUTO_TEST_CASE(testLsmCancellableParity) {
     BOOST_TEST_MESSAGE("A4 acceptance 3: cancellable swap priced directly equals swap + Bermudan "
                        "swaption within 3 s.e....");

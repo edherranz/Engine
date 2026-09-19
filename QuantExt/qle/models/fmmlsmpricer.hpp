@@ -31,6 +31,8 @@
 
 #include <qle/models/forwardmarketmodel.hpp>
 
+#include <functional>
+
 namespace QuantExt {
 using namespace QuantLib;
 
@@ -72,6 +74,16 @@ struct FmmLsmPolicy {
     Size basisOrder = 2;
 };
 
+//! Andersen-Broadie (2004) primal-dual result: the frozen-policy lower bound, the dual upper
+//! bound from the policy-induced martingale estimated by nested simulation, and the gap
+struct FmmDualBoundResult {
+    Real lowerBound = 0.0, lowerBoundSe = 0.0;
+    Real upperBound = 0.0, upperBoundSe = 0.0;
+    Real gap = 0.0, gapSe = 0.0; //!< upper - lower (paired on the outer paths)
+    Size outerPaths = 0, innerPaths = 0;
+    Real runtimeSeconds = 0.0;
+};
+
 struct FmmLsmResult {
     Real lowerBound = 0.0;    //!< frozen-policy value on the independent valuation paths
     Real lowerBoundSe = 0.0;
@@ -100,8 +112,25 @@ public:
     //! paired difference on COMMON valuation paths between own-policy and imported-policy values
     //! of this instrument: mean, standard error (the exercise-mismatch value with a paired CI)
     std::pair<Real, Real> pairedPolicyDifference(const FmmLsmPolicy& importedPolicy, const BigNatural seed) const;
+    //! Andersen-Broadie dual upper bound for the trained policy (A4 acceptance 4), nested
+    //! simulation with innerPaths sub-paths at each right of each of outerPaths outer paths.
+    //! Initial scope: rights with settleIdx == noticeIdx (exercise payoff adapted at the notice
+    //! date); instruments with a notice period are rejected until the conditional-payoff
+    //! extension is built (explicitly outstanding).
+    FmmDualBoundResult dualBound(const Size outerPaths, const Size innerPaths, const BigNatural seed) const;
 
 private:
+    //! regressors at a right given the state at its notice date
+    Array regressorsAt(const ForwardMarketModel::State& state, const Size r, const Real bank) const;
+    //! policy decision at right r for the given regressors
+    bool exerciseDecision(const Array& x, const Size r, const FmmLsmPolicy& pol) const;
+    //! realized time-0-deflated policy value continuing from right `fromRight` along a fresh
+    //! inner path started at `state` (grid index = notice of fromRight - 1 ... see .cpp),
+    //! `pastFlows` = deflated flows already realized before the start index
+    Real innerPolicyValue(const ForwardMarketModel::State& start, const Size startIdx, const Size fromRight,
+                          const Real pastFlows, const FmmLsmPolicy& pol,
+                          const std::vector<ForwardMarketModel::StepData>& steps,
+                          const std::function<Real()>& normal) const;
     struct PathData {
         std::vector<Real> deflatedFlows;   // per grid index, flow_j / B(T_j)
         std::vector<Array> regressors;     // per right
