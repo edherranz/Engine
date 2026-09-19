@@ -22,6 +22,7 @@
 #include <ql/currencies/europe.hpp>
 #include <ql/math/distributions/normaldistribution.hpp>
 #include <ql/math/integrals/gaussianquadratures.hpp>
+#include <ql/math/solvers1d/brent.hpp>
 #include <ql/math/statistics/incrementalstatistics.hpp>
 #include <ql/pricingengines/blackformula.hpp>
 #include <ql/quotes/simplequote.hpp>
@@ -619,6 +620,183 @@ BOOST_AUTO_TEST_CASE(testStochasticCompletionAndBoundary) {
     }
     BOOST_TEST_MESSAGE("64 stochastic paths: P(t,t)=1, positivity, tenor-date continuity, exact "
                        "B(T_M) grid identity all hold");
+}
+
+namespace {
+
+// ---- test-local skew calibration machinery (library-grade calibrators are an A3 deliverable;
+// ---- per house test convention these helpers are not called from the library) ----
+
+// backward-caplet implied normal vol (annualised over [0, T_j]) for bucket j under DD (lambda, delta)
+Real ddCapletNormalVol(const Real F0, const Real K, const Real lambda, const Real delta, const Real I,
+                       const Time tte) {
+    const Real stdDev = lambda * std::sqrt(I); // I = int_0^{T_j} g_j^2 du, exact
+    const Real price = blackFormula(Option::Call, K, F0, stdDev, 1.0, delta);
+    return bachelierBlackFormulaImpliedVol(Option::Call, K, F0, tte, price);
+}
+
+struct SkewFit {
+    Real lambda = 0.0, delta = 0.0;
+    bool saturated = false;
+    Real residLow = 0.0, residHigh = 0.0; // target - model at the wing strikes, in normal vol
+};
+
+// match the anchor-strike vol exactly via lambda, and the (high - low) vol differential via delta
+// within the admissible range [0, deltaMax]; on saturation, clamp and report residuals
+SkewFit calibrateSkew(const Real F0, const Real Kanchor, const Real volAnchor, const Real Klow, const Real volLow,
+                      const Real Khigh, const Real volHigh, const Real I, const Time tte, const Real deltaMax) {
+    auto lambdaFor = [&](const Real delta) {
+        const Real target = bachelierBlackFormula(Option::Call, Kanchor, F0, volAnchor * std::sqrt(tte));
+        Brent b;
+        return b.solve(
+            [&](const Real lambda) {
+                return blackFormula(Option::Call, Kanchor, F0, lambda * std::sqrt(I), 1.0, delta) - target;
+            },
+            1e-14, 0.01, 1e-8, 10.0);
+    };
+    auto skewFor = [&](const Real delta) {
+        const Real lambda = lambdaFor(delta);
+        return ddCapletNormalVol(F0, Khigh, lambda, delta, I, tte) -
+               ddCapletNormalVol(F0, Klow, lambda, delta, I, tte);
+    };
+    const Real targetSkew = volHigh - volLow;
+    const Real skewAtZero = skewFor(0.0), skewAtMax = skewFor(deltaMax);
+    SkewFit fit;
+    // skew is monotone decreasing in delta on [0, deltaMax] (asserted separately)
+    if (targetSkew >= skewAtZero) {
+        fit.delta = 0.0;
+        fit.saturated = targetSkew > skewAtZero + 1e-12;
+    } else if (targetSkew <= skewAtMax) {
+        fit.delta = deltaMax;
+        fit.saturated = targetSkew < skewAtMax - 1e-12;
+    } else {
+        Brent b;
+        fit.delta = b.solve([&](const Real d) { return skewFor(d) - targetSkew; }, 1e-10, 0.5 * deltaMax, 0.0,
+                            deltaMax);
+    }
+    fit.lambda = lambdaFor(fit.delta);
+    fit.residLow = volLow - ddCapletNormalVol(F0, Klow, fit.lambda, fit.delta, I, tte);
+    fit.residHigh = volHigh - ddCapletNormalVol(F0, Khigh, fit.lambda, fit.delta, I, tte);
+    return fit;
+}
+
+} // namespace
+
+BOOST_AUTO_TEST_CASE(testSkewShiftRoundTrip) {
+    BOOST_TEST_MESSAGE("Skew-through-shift round trip: generate 3-strike vols from known (lambda*, delta*), "
+                       "recover by ATM + skew calibration...");
+
+    // unit-level parametrization: I_j from the exact integral engine with unit level
+    FmmTestBed unitBed(FmmParametrization::LocalVolType::DisplacedDiffusion, 1.0, 0.02, 1, 0.0, 0.0);
+    const Real F0 = 0.03;
+    const std::vector<Size> buckets = {4, 12, 20};
+    const std::vector<Real> trueDeltas = {0.0, 0.02, 2.0, 4.0}; // 4.0 = 1/tau (quarterly)
+    for (const Size j : buckets) {
+        const Real I = unitBed.parametrization->integratedCovariance(j, j, 0.0, unitBed.parametrization->rateTime(j));
+        const Time tte = unitBed.parametrization->rateTime(j);
+        for (const Real dStar : trueDeltas) {
+            const Real lStar = 0.009 / (F0 + dStar); // ~90bp atm normal vol
+            const Real Klow = F0 - 0.01, Khigh = F0 + 0.01;
+            const Real vAtm = ddCapletNormalVol(F0, F0, lStar, dStar, I, tte);
+            const Real vLow = ddCapletNormalVol(F0, Klow, lStar, dStar, I, tte);
+            const Real vHigh = ddCapletNormalVol(F0, Khigh, lStar, dStar, I, tte);
+            const SkewFit fit = calibrateSkew(F0, F0, vAtm, Klow, vLow, Khigh, vHigh, I, tte, 4.0);
+            BOOST_CHECK_MESSAGE(!fit.saturated, "unexpected saturation for interior delta* " << dStar);
+            // strong criterion: repricing of all three strikes to < 0.001 bp normal vol
+            for (const Real K : {Klow, F0, Khigh}) {
+                const Real vTgt = ddCapletNormalVol(F0, K, lStar, dStar, I, tte);
+                const Real vFit = ddCapletNormalVol(F0, K, fit.lambda, fit.delta, I, tte);
+                BOOST_CHECK_MESSAGE(std::fabs(vFit - vTgt) < 1e-7,
+                                    "repricing failure j=" << j << " delta*=" << dStar << " K=" << K << ": "
+                                                           << (vFit - vTgt) * 1e4 << " bp");
+            }
+            // parameter recovery where the skew is well-conditioned (away from the normal limit)
+            if (dStar < 3.0)
+                BOOST_CHECK_MESSAGE(std::fabs(fit.delta - dStar) < 1e-3,
+                                    "delta recovery j=" << j << ": " << fit.delta << " vs " << dStar);
+        }
+    }
+}
+
+BOOST_AUTO_TEST_CASE(testSkewMonotoneAttainableRange) {
+    BOOST_TEST_MESSAGE("Skew differential is monotone decreasing in delta (well-posed inversion); "
+                       "documenting the attainable range...");
+    FmmTestBed unitBed(FmmParametrization::LocalVolType::DisplacedDiffusion, 1.0, 0.02, 1, 0.0, 0.0);
+    const Size j = 12;
+    const Real F0 = 0.03, I = unitBed.parametrization->integratedCovariance(j, j, 0.0, 3.0);
+    const Time tte = 3.0;
+    Real prev = QL_MAX_REAL;
+    for (Real d = 0.0; d <= 4.0 + 1e-12; d += 0.25) {
+        const Real lambda = 0.009 / (F0 + d);
+        const Real skew = ddCapletNormalVol(F0, 0.04, lambda, d, I, tte) -
+                          ddCapletNormalVol(F0, 0.02, lambda, d, I, tte);
+        BOOST_CHECK_MESSAGE(skew < prev + 1e-12, "skew not decreasing at delta=" << d);
+        if (d == 0.0 || std::fabs(d - 4.0) < 1e-9)
+            BOOST_TEST_MESSAGE("attainable skew endpoint at delta=" << d << ": " << skew * 1e4
+                                                                    << " bp per 200bp strike width");
+        prev = skew;
+    }
+}
+
+BOOST_AUTO_TEST_CASE(testSkewSaturationOnMarketShapedData) {
+    BOOST_TEST_MESSAGE("Skew calibration against real market-shaped USD-SOFR quotes: saturation and "
+                       "curvature residuals must be reported, not absorbed...");
+    // Quotes lifted from the pinned benchmark data (Examples/Products/Input/marketdata.csv,
+    // asof 2025-02-10, CAPFLOOR/RATE_NVOL/USD/5Y/1D): flat cap normal vols used here as
+    // market-shaped TARGETS for a single caplet bucket; proper cap->optionlet stripping is the
+    // A3 calibration milestone's job.
+    //   K=1%: 114.244 bp   K=3%: 105.458 bp   K=4%: 101.095 bp   K=5%: 110.116 bp
+    FmmTestBed unitBed(FmmParametrization::LocalVolType::DisplacedDiffusion, 1.0, 0.02, 1, 0.0, 0.0);
+    const Size j = 20; // 5y bucket
+    const Real I = unitBed.parametrization->integratedCovariance(j, j, 0.0, 5.0);
+    const Time tte = 5.0;
+    const Real F0 = 0.042; // ~SOFR 5y forward area; anchor strike 4% is near-atm
+
+    // (a) inverted (receiver) window K 1% -> 4%: target skew -13.1 bp is below the attainable
+    //     minimum (~0 at delta = 1/tau) -> the calibrator must clamp at delta = 1/tau and report
+    const SkewFit inv = calibrateSkew(F0, 0.04, 0.0101095, 0.01, 0.0114244, 0.04, 0.0101095, I, tte, 4.0);
+    BOOST_TEST_MESSAGE("(a) inverted window: delta=" << inv.delta << " saturated=" << inv.saturated
+                                                     << " residual at K=1%: " << inv.residLow * 1e4 << " bp");
+    BOOST_CHECK_MESSAGE(inv.saturated && std::fabs(inv.delta - 4.0) < 1e-12,
+                        "expected saturation at delta = 1/tau, got delta=" << inv.delta);
+    BOOST_CHECK_MESSAGE(inv.residLow > 0.0005,
+                        "expected a reported unattainable-skew residual > 5bp, got " << inv.residLow * 1e4 << " bp");
+    // anchor strike must still reprice exactly
+    BOOST_CHECK_SMALL(ddCapletNormalVol(F0, 0.04, inv.lambda, inv.delta, I, tte) - 0.0101095, 1e-10);
+
+    // (b) upper window K 3% -> 5% around the smile minimum: the +4.66 bp slope is attainable, but
+    //     the V-shape (curvature) is not a DD degree of freedom -> wings reprice, the smile bottom
+    //     at 4% shows the reported curvature residual
+    const SkewFit vfit = calibrateSkew(F0, 0.04, 0.0101095, 0.03, 0.0105458, 0.05, 0.0110116, I, tte, 4.0);
+    const Real modelAt3 = ddCapletNormalVol(F0, 0.03, vfit.lambda, vfit.delta, I, tte);
+    const Real modelAt5 = ddCapletNormalVol(F0, 0.05, vfit.lambda, vfit.delta, I, tte);
+    BOOST_TEST_MESSAGE("(b) smile window: delta=" << vfit.delta << " saturated=" << vfit.saturated
+                                                  << "; residuals: K=3% " << (0.0105458 - modelAt3) * 1e4
+                                                  << " bp, K=5% " << (0.0110116 - modelAt5) * 1e4 << " bp");
+    // note: anchoring the smile BOTTOM while matching the wing differential leaves symmetric
+    // wing residuals of equal sign - the honest signature of missing curvature
+    BOOST_CHECK_MESSAGE(!vfit.saturated, "slope within attainable family should not saturate");
+    BOOST_CHECK_SMALL((0.0105458 - modelAt3) - (0.0110116 - modelAt5), 5e-5); // near-equal wing residuals
+    BOOST_CHECK_MESSAGE(0.0105458 - modelAt3 > 0.0002,
+                        "expected reported curvature residual > 2bp at the wings, got "
+                            << (0.0105458 - modelAt3) * 1e4 << " bp");
+}
+
+BOOST_AUTO_TEST_CASE(testShiftAdmissibilityGuard) {
+    BOOST_TEST_MESSAGE("Shifts above 1/tau are rejected at construction (FMM_SPEC.md section 2.2)...");
+    Settings::instance().evaluationDate() = Date(19, September, 2026);
+    Handle<YieldTermStructure> curve(
+        QuantLib::ext::make_shared<FlatForward>(0, NullCalendar(), 0.03, Actual365Fixed()));
+    Array rateTimes(3);
+    rateTimes[0] = 0.0;
+    rateTimes[1] = 0.25;
+    rateTimes[2] = 0.5;
+    Array shifts(2, 4.5); // > 1/tau = 4
+    Array volTimes;
+    std::vector<Array> volLevels(2, Array(1, 0.01));
+    BOOST_CHECK_THROW(FmmParametrization(EURCurrency(), curve, rateTimes, shifts, volTimes, volLevels,
+                                         FmmParametrization::LocalVolType::DisplacedDiffusion, 0.6, 0.08, 1),
+                      QuantLib::Error);
 }
 
 BOOST_AUTO_TEST_SUITE_END()
