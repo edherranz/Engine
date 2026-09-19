@@ -90,6 +90,11 @@ public:
     StepData makeStep(const Time s, const Time e) const;
     //! evolve the state over one step given M+1 iid standard normal draws
     void evolve(State& state, const StepData& step, const Array& z) const;
+    //! evolve given the M+1 correlated shocks directly (v = shockSqrt * z). Because integrated
+    //! covariances are additive over subintervals, the sum of fine-step shock vectors over a
+    //! coarse window is a distributionally exact coarse shock vector — the seam used by the
+    //! paired common-random-numbers bias study (FMM_SPEC.md section 9.5/9.7)
+    void evolveWithCorrelatedShocks(State& state, const StepData& step, const Array& v) const;
 
     //! bank account B(t) (LM2020 eq. 26)
     Real bankAccount(const State& state) const;

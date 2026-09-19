@@ -1,0 +1,51 @@
+# A0 acceptance, task 4 (owner-directed design): stock-vs-fork wheel NPV parity on a CLEAN
+# Windows runner — no local drive-layout quirks (the workstation's not-ready D: drive trips the
+# stock wheel's __FILE__-derived log-root canonicalisation; see ore-fmm DECISIONS.md 2026-09-19).
+# The fork wheel and the parity harness come from the a0-parity-evidence release assets.
+name: A0 wheel parity (clean Windows)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  parity:
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+    - uses: actions/checkout@v5
+      with:
+        submodules: false
+    - uses: actions/setup-python@v6
+      with:
+        python-version: "3.11"
+    - name: fetch release assets
+      run: |
+        gh release download a0-parity-evidence --repo ${{ github.repository }} --pattern "*.whl" --pattern "a0_wheel_parity.py"
+        dir
+    - name: install stock and fork wheels into separate venvs
+      run: |
+        python -m venv stockenv
+        stockenv\Scripts\python -m pip install --quiet open-source-risk-engine==1.8.17.0
+        python -m venv forkenv
+        $whl = Get-ChildItem -Filter "open_source_risk_engine-*.whl" | Select-Object -First 1 -ExpandProperty FullName
+        forkenv\Scripts\python -m pip install --quiet $whl
+        stockenv\Scripts\python -c "import ORE; print('stock ORE OK')"
+        forkenv\Scripts\python -c "import ORE; print('fork ORE OK')"
+    - name: run both parity legs on Examples/MinimalSetup
+      run: |
+        Copy-Item Examples\MinimalSetup p_stock -Recurse
+        Copy-Item Examples\MinimalSetup p_fork -Recurse
+        stockenv\Scripts\python a0_wheel_parity.py run p_stock npv_stock.csv
+        forkenv\Scripts\python a0_wheel_parity.py run p_fork npv_fork.csv
+    - name: compare
+      run: |
+        python a0_wheel_parity.py compare npv_stock.csv npv_fork.csv 1e-8
+    - name: upload evidence
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: a0-parity-npvs
+        path: |
+          npv_stock.csv
+          npv_fork.csv

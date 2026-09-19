@@ -141,6 +141,18 @@ void ForwardMarketModel::addDrift(const StepData& step, const Array& q, Array& d
 
 void ForwardMarketModel::evolve(State& state, const StepData& step, const Array& z) const {
     QL_REQUIRE(z.size() == M_ + 1, "ForwardMarketModel::evolve: need " << M_ + 1 << " draws, got " << z.size());
+    Array v(M_ + 1, 0.0);
+    for (Size a = 0; a <= M_; ++a) {
+        Real acc = 0.0;
+        for (Size b = 0; b <= M_; ++b)
+            acc += step.shockSqrt[a][b] * z[b];
+        v[a] = acc;
+    }
+    evolveWithCorrelatedShocks(state, step, v);
+}
+
+void ForwardMarketModel::evolveWithCorrelatedShocks(State& state, const StepData& step, const Array& v) const {
+    QL_REQUIRE(v.size() == M_ + 1, "ForwardMarketModel: need " << M_ + 1 << " shocks, got " << v.size());
     QL_REQUIRE(std::fabs(state.t - step.s) < 1.0e-8,
                "ForwardMarketModel::evolve: state time " << state.t << " does not match step start " << step.s);
     const bool dd = p_->volType() == FmmParametrization::LocalVolType::DisplacedDiffusion;
@@ -154,14 +166,6 @@ void ForwardMarketModel::evolve(State& state, const StepData& step, const Array&
         ++state.period;
     }
     QL_REQUIRE(state.period <= M_, "ForwardMarketModel::evolve: step starts beyond the tenor grid");
-
-    Array v(M_ + 1, 0.0);
-    for (Size a = 0; a <= M_; ++a) {
-        Real acc = 0.0;
-        for (Size b = 0; b <= M_; ++b)
-            acc += step.shockSqrt[a][b] * z[b];
-        v[a] = acc;
-    }
 
     // predictor
     Array q(M_), drift1(M_, 0.0);

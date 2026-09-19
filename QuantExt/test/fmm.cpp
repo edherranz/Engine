@@ -20,6 +20,7 @@
 #include <boost/test/unit_test.hpp>
 
 #include <ql/currencies/europe.hpp>
+#include <ql/math/distributions/normaldistribution.hpp>
 #include <ql/math/integrals/gaussianquadratures.hpp>
 #include <ql/math/statistics/incrementalstatistics.hpp>
 #include <ql/pricingengines/blackformula.hpp>
@@ -425,6 +426,199 @@ BOOST_AUTO_TEST_CASE(testCompletionContract) {
                             "grid identity violated at T_m, m=" << m << ": " << p << " vs " << prod);
         BOOST_CHECK_MESSAGE(p > 0.0, "non-positive grid bond at m=" << m);
     }
+}
+
+BOOST_AUTO_TEST_CASE(testBiasTableCRN) {
+    BOOST_TEST_MESSAGE("Paired common-random-numbers bias table (FMM_SPEC.md section 9.7): "
+                       "sub-steps per quarter in {1,2,3,6}, backward caplet j=20...");
+
+    // deliberately skewed configuration (state-dependent drift factors) to expose stepping bias
+    FmmTestBed bed(FmmParametrization::LocalVolType::DisplacedDiffusion, 0.15, 0.02, 3);
+    const Size M = bed.parametrization->numberOfRates();
+    const Size j = 20;
+    const Real K = 0.03;
+    const Real tau = bed.parametrization->tau(j);
+    const Real analytic = analyticCaplet(*bed.parametrization, bed.curve, j, K, true);
+
+    // fine grid: 6 sub-steps per quarter (h = 1/24); coarser configs aggregate {6,3,2,1} fine steps
+    const Size fineSub = 6, nFine = 20 * fineSub;
+    std::vector<Time> fineTimes(nFine);
+    for (Size i = 0; i < nFine; ++i)
+        fineTimes[i] = 5.0 * static_cast<Real>(i + 1) / static_cast<Real>(nFine);
+    std::vector<ForwardMarketModel::StepData> fineSteps;
+    Time prev = 0.0;
+    for (const Time t : fineTimes) {
+        fineSteps.push_back(bed.model->makeStep(prev, t));
+        prev = t;
+    }
+    const std::vector<Size> aggregate = {6, 3, 2, 1}; // fine steps per coarse step
+    std::vector<std::vector<ForwardMarketModel::StepData>> cfgSteps;
+    for (const Size a : aggregate) {
+        std::vector<ForwardMarketModel::StepData> steps;
+        prev = 0.0;
+        for (Size i = a; i <= nFine; i += a) {
+            steps.push_back(bed.model->makeStep(prev, fineTimes[i - 1]));
+            prev = fineTimes[i - 1];
+        }
+        cfgSteps.push_back(steps);
+    }
+
+    const Size paths = 8192;
+    auto variates = makeMultiPathVariateGenerator(MersenneTwister, M + 1, nFine, 20260919,
+                                                  SobolBrownianGenerator::Steps, SobolRsg::JoeKuoD7);
+    std::vector<IncrementalStatistics> price(aggregate.size());
+    std::vector<IncrementalStatistics> pairedDiff(aggregate.size()); // vs finest config
+    for (Size n = 0; n < paths; ++n) {
+        const auto sample = variates->next();
+        // correlated fine shocks
+        std::vector<Array> vFine(nFine, Array(M + 1, 0.0));
+        for (Size i = 0; i < nFine; ++i)
+            for (Size a = 0; a <= M; ++a) {
+                Real acc = 0.0;
+                for (Size b = 0; b <= M; ++b)
+                    acc += fineSteps[i].shockSqrt[a][b] * sample.value[i][b];
+                vFine[i][a] = acc;
+            }
+        std::vector<Real> payoff(aggregate.size());
+        for (Size c = 0; c < aggregate.size(); ++c) {
+            const Size a = aggregate[c];
+            ForwardMarketModel::State state = bed.model->initialState();
+            Size fineIdx = 0;
+            for (const auto& step : cfgSteps[c]) {
+                Array v(M + 1, 0.0);
+                for (Size k = 0; k < a; ++k, ++fineIdx)
+                    for (Size q = 0; q <= M; ++q)
+                        v[q] += vFine[fineIdx][q];
+                bed.model->evolveWithCorrelatedShocks(state, step, v);
+            }
+            payoff[c] = tau * std::max(state.R[j - 1] - K, 0.0) / bed.model->bankAccount(state);
+            price[c].add(payoff[c]);
+        }
+        for (Size c = 0; c + 1 < aggregate.size(); ++c)
+            pairedDiff[c].add(payoff[c] - payoff.back());
+    }
+
+    BOOST_TEST_MESSAGE("BIAS-TABLE (analytic " << analytic << "):");
+    BOOST_TEST_MESSAGE("substeps/quarter |    price    | price-analytic |   s.e.   | paired diff vs finest | s.e.(diff)");
+    const std::vector<Size> subPerQuarter = {1, 2, 3, 6};
+    for (Size c = 0; c < aggregate.size(); ++c) {
+        const bool finest = c + 1 == aggregate.size();
+        BOOST_TEST_MESSAGE(subPerQuarter[c]
+                           << " | " << price[c].mean() << " | " << price[c].mean() - analytic << " | "
+                           << price[c].errorEstimate() << " | " << (finest ? 0.0 : pairedDiff[c].mean()) << " | "
+                           << (finest ? 0.0 : pairedDiff[c].errorEstimate()));
+    }
+    // finest config must agree with the closed form
+    BOOST_CHECK_MESSAGE(std::fabs(price.back().mean() - analytic) < 3.0 * price.back().errorEstimate() + 2e-6,
+                        "finest config bias " << price.back().mean() - analytic);
+    // two or more sub-steps per quarter: paired bias below resolution (OQ4 evidence)
+    for (Size c = 1; c + 1 < aggregate.size(); ++c)
+        BOOST_CHECK_MESSAGE(std::fabs(pairedDiff[c].mean()) < 3.0 * pairedDiff[c].errorEstimate() + 2e-6,
+                            subPerQuarter[c] << " sub-steps paired bias " << pairedDiff[c].mean() << " exceeds "
+                                             << 3.0 * pairedDiff[c].errorEstimate());
+}
+
+BOOST_AUTO_TEST_CASE(testReplicationMomentsWithUncertainty) {
+    BOOST_TEST_MESSAGE("Replication ln-bond variance with replication-based uncertainty, plus a "
+                       "KS normality check (supplementary evidence)...");
+
+    Settings::instance().evaluationDate() = Date(19, September, 2026);
+    Handle<YieldTermStructure> curve(
+        QuantLib::ext::make_shared<FlatForward>(0, NullCalendar(), 0.03, Actual365Fixed()));
+    auto lgm = QuantLib::ext::make_shared<IrLgm1fConstantParametrization>(EURCurrency(), curve, 0.01, 0.01);
+    const Size M = 20;
+    Array rateTimes(M + 1);
+    for (Size k = 0; k <= M; ++k)
+        rateTimes[k] = 0.25 * static_cast<Real>(k);
+    auto param = QuantLib::ext::make_shared<FmmParametrization>(EURCurrency(), curve, rateTimes, lgm);
+    auto model = QuantLib::ext::make_shared<ForwardMarketModel>(param);
+
+    const Time Te = 2.0, Tm = 5.0;
+    const Real lgmVar = std::pow(lgm->H(Tm) - lgm->H(Te), 2.0) * lgm->zeta(Te);
+
+    const Size reps = 16, pathsPerRep = 4096;
+    IncrementalStatistics varAcross;
+    std::vector<Real> firstRepLogs;
+    for (Size r = 0; r < reps; ++r) {
+        FmmPathGenerator gen(model, {Te}, MersenneTwister, 1000 + r);
+        IncrementalStatistics logs;
+        for (Size n = 0; n < pathsPerRep; ++n) {
+            const auto path = gen.next();
+            const Real lp = std::log(model->discountBond(path.states[0], Tm));
+            logs.add(lp);
+            if (r == 0)
+                firstRepLogs.push_back(lp);
+        }
+        varAcross.add(logs.variance());
+    }
+    const Real varMean = varAcross.mean();
+    const Real varSe = varAcross.errorEstimate(); // s.e. of the mean across independent replications
+    BOOST_TEST_MESSAGE("ln P(2,5) variance: fmm " << varMean << " +/- " << varSe << " (16 reps x 4096), lgm analytic "
+                                                  << lgmVar << ", diff " << varMean - lgmVar);
+    BOOST_CHECK_MESSAGE(std::fabs(varMean - lgmVar) < 3.0 * varSe,
+                        "replication variance off by " << varMean - lgmVar << " vs 3 s.e. " << 3.0 * varSe);
+
+    // supplementary: one-sample KS against the normal with the LGM variance (mean taken empirical;
+    // the drift of ln P depends on the measure while variance and normality do not)
+    std::sort(firstRepLogs.begin(), firstRepLogs.end());
+    Real meanHat = 0.0;
+    for (const Real v : firstRepLogs)
+        meanHat += v;
+    meanHat /= static_cast<Real>(firstRepLogs.size());
+    CumulativeNormalDistribution N;
+    Real d = 0.0;
+    const Real n = static_cast<Real>(firstRepLogs.size());
+    for (Size i = 0; i < firstRepLogs.size(); ++i) {
+        const Real z = (firstRepLogs[i] - meanHat) / std::sqrt(lgmVar);
+        const Real F = N(z);
+        d = std::max(d, std::max(std::fabs(F - static_cast<Real>(i) / n),
+                                 std::fabs(F - static_cast<Real>(i + 1) / n)));
+    }
+    BOOST_TEST_MESSAGE("KS statistic D_n = " << d << " (n = " << firstRepLogs.size()
+                                             << "), 1% asymptotic threshold ~ " << 1.63 / std::sqrt(n));
+    BOOST_CHECK_MESSAGE(d < 2.5 / std::sqrt(n), "KS distance " << d << " unexpectedly large");
+}
+
+BOOST_AUTO_TEST_CASE(testStochasticCompletionAndBoundary) {
+    BOOST_TEST_MESSAGE("Stochastic completion identities and grid-boundary behaviour incl. T_M...");
+
+    FmmTestBed bed(FmmParametrization::LocalVolType::DisplacedDiffusion, 0.0025, -1.0, 2);
+    const std::vector<Time> userTimes = {2.4999, 2.5, 2.5001, 3.7, 4.9999, 5.0};
+    FmmPathGenerator gen(bed.model, userTimes, MersenneTwister, 5);
+    const Size paths = 64;
+    for (Size np = 0; np < paths; ++np) {
+        const auto path = gen.next();
+        for (Size i = 0; i < userTimes.size(); ++i) {
+            const auto& st = path.states[i];
+            const Time t = userTimes[i];
+            BOOST_REQUIRE_MESSAGE(std::fabs(bed.model->discountBond(st, t) - 1.0) < 1e-10,
+                                  "stochastic P(t,t) != 1 at t=" << t);
+            for (const Time T : {4.0, 5.0}) {
+                if (T < t)
+                    continue;
+                BOOST_REQUIRE_MESSAGE(bed.model->discountBond(st, T) > 0.0,
+                                      "non-positive stochastic bond at t=" << t << " T=" << T);
+            }
+        }
+        // continuity of ln P(., 4.0) across the tenor date 2.5 (eps = 1e-4 on both sides)
+        const Real lpBefore = std::log(bed.model->discountBond(path.states[0], 4.0));
+        const Real lpAfter = std::log(bed.model->discountBond(path.states[2], 4.0));
+        BOOST_REQUIRE_MESSAGE(std::fabs(lpAfter - lpBefore) < 0.02,
+                              "ln P jump across tenor date: " << lpAfter - lpBefore);
+        // T_M boundary: state rests exactly at the last tenor date
+        const auto& sM = path.states.back();
+        BOOST_REQUIRE(std::fabs(sM.t - 5.0) < 1e-12);
+        BOOST_REQUIRE_MESSAGE(std::fabs(bed.model->discountBond(sM, 5.0) - 1.0) < 1e-10, "P(T_M,T_M) != 1");
+        Real prod = 1.0;
+        for (Size jj = 1; jj <= 20; ++jj)
+            prod *= 1.0 + bed.parametrization->tau(jj) * sM.R[jj - 1];
+        const Real b = bed.model->bankAccount(sM);
+        BOOST_REQUIRE_MESSAGE(std::fabs(b / prod - 1.0) < 1e-10,
+                              "B(T_M) grid identity violated: " << b << " vs " << prod);
+        BOOST_REQUIRE(bed.model->numeraire(sM) > 0.0);
+    }
+    BOOST_TEST_MESSAGE("64 stochastic paths: P(t,t)=1, positivity, tenor-date continuity, exact "
+                       "B(T_M) grid identity all hold");
 }
 
 BOOST_AUTO_TEST_SUITE_END()
