@@ -617,7 +617,13 @@ void OREApp::setupLog(Size mask, const std::string& path, const std::string& fil
     std::filesystem::path oreRootPath =
         logRootPath.empty() ? std::filesystem::path(__FILE__).parent_path().parent_path().parent_path().parent_path()
                             : logRootPath;
-    Log::instance().setRootPath(oreRootPath);
+    try {
+        Log::instance().setRootPath(oreRootPath);
+    } catch (...) {
+        // The __FILE__-derived fallback embeds the path of the machine the binary was built on;
+        // canonicalising it can throw here (e.g. that drive letter is a not-ready device on this
+        // machine). Root-path trimming only shortens log locations, so skip it rather than fail.
+    }
     Log::instance().setMask(mask);
     Log::instance().switchOn();
 

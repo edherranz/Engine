@@ -195,21 +195,25 @@ class my_build_ext(build_ext):
 
             self.library_dirs.append(self.validate_path(BOOST_LIB))
             
-            ORE_BUILD_DIR = os.path.join(ORE_DIR,"build")
-            
+            # out-of-tree CMake build directories can be supplied via ORE_BUILD_DIR
+            ORE_BUILD_DIR = os.environ.get('ORE_BUILD_DIR', os.path.join(ORE_DIR,"build"))
+
             # for internal use
-            if(os.path.exists(os.path.join("..","..","build"))):
+            if('ORE_BUILD_DIR' not in os.environ and os.path.exists(os.path.join("..","..","build"))):
                 ORE_BUILD_DIR = os.path.join("..","..","build","ore")
-                print("ORE BUILD DIR: ", ORE_BUILD_DIR)
+            print("ORE BUILD DIR: ", ORE_BUILD_DIR)
 
             try:
                 self.include_dirs.append(self.validate_path(os.path.join(ORE_BUILD_DIR, "QuantLib")))
+                # generated headers (qle/gitversion.hpp) live in the build tree
+                self.include_dirs.append(self.validate_path(os.path.join(ORE_BUILD_DIR, "QuantExt")))
                 self.library_dirs.append(self.validate_path(os.path.join(ORE_BUILD_DIR, 'QuantLib', 'ql', target)))
                 self.library_dirs.append(self.validate_path(os.path.join(ORE_BUILD_DIR, 'QuantExt', 'qle', target)))
                 self.library_dirs.append(self.validate_path(os.path.join(ORE_BUILD_DIR, 'OREData', 'ored', target)))
                 self.library_dirs.append(self.validate_path(os.path.join(ORE_BUILD_DIR, 'OREAnalytics', 'orea', target)))
             except:
                 self.include_dirs.append(self.validate_path(os.path.join(ORE_BUILD_DIR, "QuantLib")))
+                self.include_dirs.append(self.validate_path(os.path.join(ORE_BUILD_DIR, "QuantExt")))
                 self.library_dirs.append(self.validate_path(os.path.join(ORE_BUILD_DIR, 'QuantLib', 'ql')))
                 self.library_dirs.append(self.validate_path(os.path.join(ORE_BUILD_DIR, 'QuantExt', 'qle')))
                 self.library_dirs.append(self.validate_path(os.path.join(ORE_BUILD_DIR, 'OREData', 'ored')))
