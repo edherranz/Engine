@@ -32,12 +32,14 @@
 
 #include <qle/models/fmmanalytics.hpp>
 #include <qle/models/fmmcalibration.hpp>
+#include <qle/models/fmmlsmpricer.hpp>
 #include <qle/models/fmmparametrization.hpp>
 #include <qle/models/forwardmarketmodel.hpp>
 #include <qle/models/irlgm1fconstantparametrization.hpp>
 #include <qle/models/irlgm1fpiecewiseconstantparametrization.hpp>
 #include <qle/models/lgm.hpp>
 #include <qle/pricingengines/analyticlgmswaptionengine.hpp>
+#include <qle/pricingengines/numericlgmmultilegoptionengine.hpp>
 
 #include <ql/indexes/iborindex.hpp>
 #include <ql/instruments/makevanillaswap.hpp>
@@ -1062,11 +1064,12 @@ BOOST_AUTO_TEST_CASE(testCalibrationOnMarketQuotes) {
     BOOST_CHECK_MESSAGE(worstB < 0.01, "strategy (b) residual " << worstB << " bp");
     BOOST_CHECK_SMALL(vB.a[0] - 1.0, 1e-14);
 
-    // ---- part 2: joint (c) with FLAT-CAP vols as caplet proxies - a DOCUMENTED BASIS FINDING:
-    // flat cap vols average the small front optionlets of the steep 2025 vol term structure and
-    // so understate the per-bucket optionlet vols; correlation cannot close the gap (the mean
-    // caplet residual is ~-3 bp across rhoInf in [0.3, 0.999]). Proper cap->optionlet stripping
-    // is the A5/ORE-plumbing deliverable; until then the residuals below are the honest record.
+    // ---- part 2: joint (c) with FLAT-CAP vols as caplet proxies - a PROXY-ARTIFACT record
+    // (owner correction 2026-09-19): the residual below reflects the proxy's inconsistency (flat
+    // cap vols are not optionlet vols; they average the small front optionlets of the steep 2025
+    // vol term structure), NOT an economic caplet/swaption basis. Correlation cannot close it
+    // (mean residual flat in rhoInf). Real-market JOINT calibration is PENDING until validated
+    // against correctly stripped SOFR optionlets or actual cap prices (A5 stripping, fail-fast).
     FmmSeparableVols v;
     FmmCalibrationReport report;
     runCalibration(0.042, 0.9, v, report);
@@ -1232,6 +1235,246 @@ BOOST_AUTO_TEST_CASE(testReplicationRepricesLgmSwaptions) {
                             "replication repricing error " << diffBp << " bp at expiry index " << a);
     }
     BOOST_TEST_MESSAGE("worst replication repricing error: " << worstBp << " bp (approximation-level target < 1 bp)");
+}
+
+namespace {
+
+// payer swap flows into an FmmCallableInstrument flow set: receive float quarterly, pay fixed K
+// annually (grid indices multiples of 4), unit notional, from the FLOAT RECEIVER's perspective
+void fillPayerSwapFlows(FmmCallableInstrument& inst, const FmmParametrization& p, const Size from, const Size to,
+                        const Real K, const Real sign = 1.0) {
+    inst.lastFlowIdx = to;
+    inst.fixedFlows.assign(p.numberOfRates() + 1, 0.0);
+    inst.floatWeights.assign(p.numberOfRates() + 1, 0.0);
+    for (Size j = from + 1; j <= to; ++j)
+        inst.floatWeights[j] = sign;
+    for (Size c = from + 4; c <= to; c += 4)
+        inst.fixedFlows[c] = -sign * K * (p.rateTime(c) - p.rateTime(c - 4));
+}
+
+} // namespace
+
+BOOST_AUTO_TEST_CASE(testLsmEuropeanLimit) {
+    BOOST_TEST_MESSAGE("A4 acceptance 1: one-right LSM 'Bermudan' matches the A3 European closed "
+                       "form / approximation...");
+    FmmTestBed bed(FmmParametrization::LocalVolType::DisplacedDiffusion, 0.0025, -1.0, 3);
+    FmmSwapSpec spec;
+    spec.a = 8;
+    spec.b = 20;
+    for (Size c = 12; c <= 20; c += 4) {
+        spec.fixedPayIndices.push_back(c);
+        spec.fixedAccruals.push_back(1.0);
+    }
+    const Real K = fmmForwardSwapRate(*bed.parametrization, spec); // atm
+    const auto apx = fmmSwaptionApprox(*bed.parametrization, spec, K);
+
+    FmmCallableInstrument inst;
+    inst.style = FmmCallableInstrument::Style::Enter;
+    fillPayerSwapFlows(inst, *bed.parametrization, 8, 20, K);
+    inst.rights.push_back({8, 8, 0.0});
+
+    FmmLsmPricer pricer(bed.model, inst);
+    const auto res = pricer.calculate();
+    BOOST_TEST_MESSAGE("european limit: lsm " << res.lowerBound << " +/- " << res.lowerBoundSe << ", approx "
+                                              << apx.price << ", training " << res.trainingValue << ", runtime "
+                                              << res.runtimeSeconds << " s");
+    BOOST_CHECK_MESSAGE(std::fabs(res.lowerBound - apx.price) < 3.0 * res.lowerBoundSe + 2e-5,
+                        "european limit mismatch: " << res.lowerBound - apx.price);
+}
+
+BOOST_AUTO_TEST_CASE(testLsmBermudanVsLgmGrid) {
+    BOOST_TEST_MESSAGE("A4 acceptance 2: replication-mode Bermudan swaption, LSM lower bound vs "
+                       "ORE's NumericLgmSwaptionEngine grid price...");
+
+    const Date asof(19, September, 2026);
+    Settings::instance().evaluationDate() = asof;
+    Handle<YieldTermStructure> curve(
+        QuantLib::ext::make_shared<FlatForward>(0, NullCalendar(), 0.03, Actual365Fixed()));
+    const Actual365Fixed dc;
+    const Date end = asof + Period(5, Years);
+    const Schedule quarterly(asof, end, Period(3, Months), NullCalendar(), Unadjusted, Unadjusted,
+                             DateGeneration::Forward, false);
+    const Size M = quarterly.size() - 1;
+    Array rateTimes(M + 1);
+    for (Size k = 0; k <= M; ++k)
+        rateTimes[k] = dc.yearFraction(asof, quarterly[k]);
+    Array alphaTimes(3);
+    alphaTimes[0] = rateTimes[4];
+    alphaTimes[1] = rateTimes[8];
+    alphaTimes[2] = rateTimes[12];
+    Array alpha(4);
+    alpha[0] = 0.0090;
+    alpha[1] = 0.0110;
+    alpha[2] = 0.0100;
+    alpha[3] = 0.0095;
+    auto lgmParam = QuantLib::ext::make_shared<IrLgm1fPiecewiseConstantParametrization>(
+        EURCurrency(), curve, alphaTimes, alpha, Array(), Array(1, 0.01));
+    auto lgmModel = QuantLib::ext::make_shared<LinearGaussMarkovModel>(lgmParam);
+    auto fmmParam = QuantLib::ext::make_shared<FmmParametrization>(EURCurrency(), curve, rateTimes, lgmParam);
+    auto fmmModel = QuantLib::ext::make_shared<ForwardMarketModel>(fmmParam);
+
+    // atm strike of the full 5y swap
+    auto index = QuantLib::ext::make_shared<IborIndex>("FMMTEST", Period(3, Months), 0, EURCurrency(),
+                                                       NullCalendar(), Unadjusted, false, dc, curve);
+    const Schedule fixedSched(asof, end, Period(1, Years), NullCalendar(), Unadjusted, Unadjusted,
+                              DateGeneration::Forward, false);
+    const Schedule floatSched(asof, end, Period(3, Months), NullCalendar(), Unadjusted, Unadjusted,
+                              DateGeneration::Forward, false);
+    VanillaSwap probe(VanillaSwap::Payer, 1.0, fixedSched, 0.03, dc, floatSched, index, 0.0, dc);
+    probe.setPricingEngine(QuantLib::ext::make_shared<DiscountingSwapEngine>(curve));
+    const Real K = probe.fairRate();
+
+    // LGM grid price of the Bermudan (annual exercises 1y..4y into the remaining swap)
+    std::vector<Date> exDates = {quarterly[4], quarterly[8], quarterly[12], quarterly[16]};
+    auto underlying = QuantLib::ext::make_shared<VanillaSwap>(VanillaSwap::Payer, 1.0, fixedSched, K, dc, floatSched,
+                                                              index, 0.0, dc);
+    auto swaption = QuantLib::ext::make_shared<Swaption>(
+        underlying, QuantLib::ext::make_shared<BermudanExercise>(exDates));
+    swaption->setPricingEngine(QuantLib::ext::make_shared<NumericLgmSwaptionEngine>(
+        Handle<LinearGaussMarkovModel>(lgmModel), 7.0, 100, 7.0, 100, curve));
+    const Real gridPrice = swaption->NPV();
+
+    // FMM LSM on the identical structure
+    FmmCallableInstrument inst;
+    inst.style = FmmCallableInstrument::Style::Enter;
+    fillPayerSwapFlows(inst, *fmmParam, 0, M, K);
+    // exercise into the remainder: switched flows j > settle
+    inst.rights.push_back({4, 4, 0.0});
+    inst.rights.push_back({8, 8, 0.0});
+    inst.rights.push_back({12, 12, 0.0});
+    inst.rights.push_back({16, 16, 0.0});
+    // flows before the first exercise never belong to the option
+    for (Size j = 1; j <= 4; ++j) {
+        inst.floatWeights[j] = 0.0;
+        inst.fixedFlows[j] = 0.0;
+    }
+    FmmLsmConfig cfg;
+    cfg.trainingPaths = 32768;
+    cfg.valuationPaths = 32768;
+    FmmLsmPricer pricer(fmmModel, inst, cfg);
+    const auto res = pricer.calculate();
+
+    BOOST_TEST_MESSAGE("bermudan: lgm grid " << gridPrice << ", fmm lsm lower " << res.lowerBound << " +/- "
+                                             << res.lowerBoundSe << " (training " << res.trainingValue
+                                             << "), runtime " << res.runtimeSeconds << " s");
+    std::ostringstream probs;
+    for (Size r = 0; r < res.exerciseProbability.size(); ++r)
+        probs << " " << res.exerciseProbability[r] << "+/-" << res.exerciseProbabilitySe[r];
+    BOOST_TEST_MESSAGE("exercise probabilities (1y..4y):" << probs.str() << "; never "
+                                                          << res.noExerciseProbability
+                                                          << "; E[notice time | exercise] "
+                                                          << res.expectedExerciseTime);
+    // lower-bound property and closeness (acceptance bound: max(3 s.e., 1% of option value))
+    BOOST_CHECK_MESSAGE(res.lowerBound < gridPrice + 3.0 * res.lowerBoundSe,
+                        "lower bound above grid price: " << res.lowerBound - gridPrice);
+    const Real bound = std::max(3.0 * res.lowerBoundSe, 0.01 * gridPrice);
+    BOOST_CHECK_MESSAGE(std::fabs(res.lowerBound - gridPrice) < bound,
+                        "lsm vs grid: " << res.lowerBound - gridPrice << " outside " << bound);
+}
+
+BOOST_AUTO_TEST_CASE(testLsmCancellableParity) {
+    BOOST_TEST_MESSAGE("A4 acceptance 3: cancellable swap priced directly equals swap + Bermudan "
+                       "swaption within 3 s.e....");
+    FmmTestBed bed(FmmParametrization::LocalVolType::DisplacedDiffusion, 0.0025, -1.0, 3);
+    const Real K = 0.031;
+    const std::vector<FmmCallableInstrument::Right> rights = {{4, 4, 0.0}, {8, 8, 0.0}, {12, 12, 0.0}, {16, 16, 0.0}};
+
+    // direct: payer swap (receive float, pay fixed) with cancellation rights, holder = float receiver
+    FmmCallableInstrument cancellable;
+    cancellable.style = FmmCallableInstrument::Style::Cancel;
+    fillPayerSwapFlows(cancellable, *bed.parametrization, 0, 20, K);
+    cancellable.rights = rights;
+    FmmLsmPricer directPricer(bed.model, cancellable);
+    const auto direct = directPricer.calculate();
+
+    // decomposition: full payer swap + Bermudan option to ENTER the offsetting receiver remainder
+    FmmCallableInstrument receiverOpt;
+    receiverOpt.style = FmmCallableInstrument::Style::Enter;
+    fillPayerSwapFlows(receiverOpt, *bed.parametrization, 0, 20, K, -1.0); // receiver remainder
+    receiverOpt.rights = rights;
+    FmmLsmConfig cfgB;
+    cfgB.trainingSeed = 77;
+    cfgB.valuationSeed = 787878; // independent runs
+    FmmLsmPricer optPricer(bed.model, receiverOpt, cfgB);
+    const auto opt = optPricer.calculate();
+
+    const Real swapPv = direct.underlyingValue; // curve value of the full payer swap
+    const Real lhs = direct.lowerBound;
+    const Real rhs = swapPv + opt.lowerBound;
+    const Real se = std::sqrt(direct.lowerBoundSe * direct.lowerBoundSe + opt.lowerBoundSe * opt.lowerBoundSe);
+    BOOST_TEST_MESSAGE("cancellable direct " << lhs << " +/- " << direct.lowerBoundSe << "; swap " << swapPv
+                                             << " + bermudan " << opt.lowerBound << " = " << rhs << "; diff "
+                                             << lhs - rhs << " vs 3 s.e. " << 3.0 * se);
+    BOOST_CHECK_MESSAGE(std::fabs(lhs - rhs) < 3.0 * se + 2e-5, "cancellable parity violated: " << lhs - rhs);
+}
+
+BOOST_AUTO_TEST_CASE(testExerciseTransferConfigurable) {
+    BOOST_TEST_MESSAGE("A4 product 6 (owner-specified design): configurable imported-policy "
+                       "scenario - issuer-optimal note call vs the dealer's frozen swap-"
+                       "cancellation policy applied to the note; notice != settle, call fee "
+                       "enforced; paired CI on common valuation paths...");
+    // VALUATION PERSPECTIVE: the ISSUER of a callable fixed-rate note (all flows signed from the
+    // issuer, i.e. negative coupons/principal); a POSITIVE mismatch below is value the issuer
+    // LOSES by following the imported (dealer) policy instead of the note-optimal one.
+    FmmTestBed bed(FmmParametrization::LocalVolType::DisplacedDiffusion, 0.0025, -1.0, 3);
+    const Real coupon = 0.032;
+    const std::vector<FmmCallableInstrument::Right> noteRights = {
+        {8, 9, -1.0}, {12, 13, -1.0}, {16, 17, -1.0}}; // notice 1 quarter before settlement; call at par
+
+    FmmCallableInstrument note;
+    note.style = FmmCallableInstrument::Style::Cancel;
+    note.lastFlowIdx = 20;
+    note.fixedFlows.assign(21, 0.0);
+    note.floatWeights.assign(21, 0.0);
+    for (Size c = 4; c <= 20; c += 4)
+        note.fixedFlows[c] -= coupon * (bed.parametrization->rateTime(c) - bed.parametrization->rateTime(c - 4));
+    note.fixedFlows[20] -= 1.0; // principal
+    note.rights = noteRights;
+
+    // the dealer's mirror cancellable swap in the aligned hedge pairing: the dealer PAYS the
+    // fixed coupon and receives float (the issuer's note-to-floating hedge), holding the
+    // cancellation right; its cancel trigger (rates falling) aligns with the note call. This is
+    // one CONFIGURATION of the imported-policy scenario, not a claim of universal practice —
+    // the opposite-signed mirror produces a large adversarial mismatch instead.
+    FmmCallableInstrument dealerSwap;
+    dealerSwap.style = FmmCallableInstrument::Style::Cancel;
+    fillPayerSwapFlows(dealerSwap, *bed.parametrization, 0, 20, coupon, 1.0); // pay fixed, receive float
+    dealerSwap.rights = {{8, 9, 0.0}, {12, 13, 0.0}, {16, 17, 0.0}};
+
+    FmmLsmPricer notePricer(bed.model, note);
+    const auto noteOwn = notePricer.calculate();
+    FmmLsmConfig cfgD;
+    cfgD.trainingSeed = 91;
+    FmmLsmPricer dealerPricer(bed.model, dealerSwap, cfgD);
+    dealerPricer.calculate();
+
+    const auto noteImported = notePricer.valueWithPolicy(dealerPricer.policy(), 555555);
+    const auto paired = notePricer.pairedPolicyDifference(dealerPricer.policy(), 666666);
+    std::ostringstream ownProb, impProb;
+    for (Size r = 0; r < noteOwn.exerciseProbability.size(); ++r)
+        ownProb << " " << noteOwn.exerciseProbability[r];
+    for (Size r = 0; r < noteImported.exerciseProbability.size(); ++r)
+        impProb << " " << noteImported.exerciseProbability[r];
+    BOOST_TEST_MESSAGE("note own-policy exercise probs:" << ownProb.str() << " (never " << noteOwn.noExerciseProbability
+                                                         << ")");
+    BOOST_TEST_MESSAGE("dealer imported-policy exercise probs on note:" << impProb.str() << " (never "
+                                                                        << noteImported.noExerciseProbability << ")");
+    BOOST_TEST_MESSAGE("note own-policy " << noteOwn.lowerBound << " +/- " << noteOwn.lowerBoundSe
+                                          << "; imported-policy " << noteImported.lowerBound << " +/- "
+                                          << noteImported.lowerBoundSe);
+    // the two policies must produce genuinely different exercise behaviour, else the scenario is
+    // vacuous (guards against a degenerate imported policy)
+    Real probGap = std::fabs(noteOwn.noExerciseProbability - noteImported.noExerciseProbability);
+    for (Size r = 0; r < noteOwn.exerciseProbability.size(); ++r)
+        probGap = std::max(probGap, std::fabs(noteOwn.exerciseProbability[r] - noteImported.exerciseProbability[r]));
+    BOOST_CHECK_MESSAGE(probGap > 0.01, "imported policy indistinguishable from own policy (gap " << probGap << ")");
+    BOOST_TEST_MESSAGE("exercise-mismatch value (own - imported, paired on common paths): " << paired.first
+                                                                                            << " +/- "
+                                                                                            << paired.second);
+    // own-optimal must not be worse than the imported policy beyond estimation noise
+    BOOST_CHECK_MESSAGE(paired.first > -3.0 * paired.second - 2e-5,
+                        "own policy worse than imported beyond noise: " << paired.first);
+    // joint package optimization is intentionally NOT performed here (kept distinct per owner)
 }
 
 BOOST_AUTO_TEST_CASE(testShiftAdmissibilityGuard) {
