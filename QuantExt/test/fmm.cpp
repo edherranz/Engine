@@ -35,7 +35,15 @@
 #include <qle/models/fmmparametrization.hpp>
 #include <qle/models/forwardmarketmodel.hpp>
 #include <qle/models/irlgm1fconstantparametrization.hpp>
+#include <qle/models/irlgm1fpiecewiseconstantparametrization.hpp>
 #include <qle/models/lgm.hpp>
+#include <qle/pricingengines/analyticlgmswaptionengine.hpp>
+
+#include <ql/indexes/iborindex.hpp>
+#include <ql/instruments/makevanillaswap.hpp>
+#include <ql/instruments/swaption.hpp>
+#include <ql/pricingengines/swap/discountingswapengine.hpp>
+#include <ql/time/schedule.hpp>
 
 using namespace QuantLib;
 using namespace QuantExt;
@@ -1136,6 +1144,94 @@ BOOST_AUTO_TEST_CASE(testCalibrationOnMarketQuotes) {
                                                                         << worstBumped << " bp");
     BOOST_CHECK_MESSAGE(worstMove < 0.10, "unstable under bump: " << worstMove);
     BOOST_CHECK_MESSAGE(worstBumped < 0.01, "bumped fit degraded: " << worstBumped << " bp");
+}
+
+BOOST_AUTO_TEST_CASE(testReplicationRepricesLgmSwaptions) {
+    BOOST_TEST_MESSAGE("A3 acceptance 4: replication-mode FMM fed LGM's parameters reprices LGM's "
+                       "calibration swaptions (vs AnalyticLgmSwaptionEngine), schedule-accurate...");
+
+    const Date asof(19, September, 2026);
+    Settings::instance().evaluationDate() = asof;
+    Handle<YieldTermStructure> curve(
+        QuantLib::ext::make_shared<FlatForward>(0, NullCalendar(), 0.03, Actual365Fixed()));
+    const Actual365Fixed dc;
+
+    // quarterly date grid to 5y, NullCalendar/Unadjusted so schedule and model times align exactly
+    const Date start = asof;
+    const Date end = asof + Period(5, Years);
+    const Schedule quarterly(start, end, Period(3, Months), NullCalendar(), Unadjusted, Unadjusted,
+                             DateGeneration::Forward, false);
+    const Size M = quarterly.size() - 1;
+    Array rateTimes(M + 1);
+    for (Size k = 0; k <= M; ++k)
+        rateTimes[k] = dc.yearFraction(asof, quarterly[k]);
+
+    // LGM with structured piecewise-constant alpha (breaks at 1y, 2y, 3y) and constant kappa
+    Array alphaTimes(3);
+    alphaTimes[0] = rateTimes[4];
+    alphaTimes[1] = rateTimes[8];
+    alphaTimes[2] = rateTimes[12];
+    Array alpha(4);
+    alpha[0] = 0.0090;
+    alpha[1] = 0.0110;
+    alpha[2] = 0.0100;
+    alpha[3] = 0.0095;
+    auto lgmParam = QuantLib::ext::make_shared<IrLgm1fPiecewiseConstantParametrization>(
+        EURCurrency(), curve, alphaTimes, alpha, Array(), Array(1, 0.01));
+    auto lgmModel = QuantLib::ext::make_shared<LinearGaussMarkovModel>(lgmParam);
+
+    // replication-mode FMM on the schedule grid, fed the SAME parametrization
+    auto fmmParam = QuantLib::ext::make_shared<FmmParametrization>(EURCurrency(), curve, rateTimes, lgmParam);
+
+    auto index = QuantLib::ext::make_shared<IborIndex>("FMMTEST", Period(3, Months), 0, EURCurrency(),
+                                                       NullCalendar(), Unadjusted, false, dc, curve);
+    auto swapEngine = QuantLib::ext::make_shared<DiscountingSwapEngine>(curve);
+    auto lgmEngine = QuantLib::ext::make_shared<AnalyticLgmSwaptionEngine>(lgmParam, curve);
+
+    Real worstBp = 0.0;
+    for (const Size a : {4, 8, 12, 16}) {
+        const Date expiry = quarterly[a];
+        const Schedule fixedSched(expiry, end, Period(1, Years), NullCalendar(), Unadjusted, Unadjusted,
+                                  DateGeneration::Forward, false);
+        const Schedule floatSched(expiry, end, Period(3, Months), NullCalendar(), Unadjusted, Unadjusted,
+                                  DateGeneration::Forward, false);
+        // ATM strike from the discounting engine
+        VanillaSwap probe(VanillaSwap::Payer, 1.0, fixedSched, 0.03, dc, floatSched, index, 0.0, dc);
+        probe.setPricingEngine(swapEngine);
+        const Real fair = probe.fairRate();
+        auto underlying = QuantLib::ext::make_shared<VanillaSwap>(VanillaSwap::Payer, 1.0, fixedSched, fair, dc,
+                                                                  floatSched, index, 0.0, dc);
+        underlying->setPricingEngine(swapEngine);
+        auto swaption = QuantLib::ext::make_shared<Swaption>(
+            underlying, QuantLib::ext::make_shared<EuropeanExercise>(expiry));
+        swaption->setPricingEngine(lgmEngine);
+        const Real lgmPrice = swaption->NPV();
+
+        // grid-mapped FMM swap spec with the schedule's actual accruals on the fixed leg
+        FmmSwapSpec spec;
+        spec.a = a;
+        spec.b = M;
+        for (Size c = a + 4; c <= M; c += 4) {
+            spec.fixedPayIndices.push_back(c);
+            spec.fixedAccruals.push_back(rateTimes[c] - rateTimes[c - 4]);
+        }
+        const Real S0 = fmmForwardSwapRate(*fmmParam, spec);
+        BOOST_REQUIRE_MESSAGE(std::fabs(S0 - fair) < 1e-10,
+                              "forward swap rate mismatch: fmm " << S0 << " vs discounting " << fair);
+        const auto apx = fmmSwaptionApprox(*fmmParam, spec, fair);
+
+        const Time Te = rateTimes[a];
+        const Real A0 = fmmAnnuity(*fmmParam, spec);
+        const Real lgmVol = bachelierBlackFormulaImpliedVol(Option::Call, fair, S0, Te, lgmPrice / A0);
+        const Real diffBp = (apx.normalVol - lgmVol) * 1e4;
+        BOOST_TEST_MESSAGE("coterminal " << a / 4 << "y x " << (M - a) / 4 << "y: LGM " << lgmVol * 1e4
+                                         << " bp, FMM-replication approx " << apx.normalVol * 1e4 << " bp, diff "
+                                         << diffBp << " bp");
+        worstBp = std::max(worstBp, std::fabs(diffBp));
+        BOOST_CHECK_MESSAGE(std::fabs(diffBp) < 1.0,
+                            "replication repricing error " << diffBp << " bp at expiry index " << a);
+    }
+    BOOST_TEST_MESSAGE("worst replication repricing error: " << worstBp << " bp (approximation-level target < 1 bp)");
 }
 
 BOOST_AUTO_TEST_CASE(testShiftAdmissibilityGuard) {
