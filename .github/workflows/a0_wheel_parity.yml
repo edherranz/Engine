@@ -6,6 +6,9 @@ name: A0 wheel parity (clean Windows)
 
 on:
   workflow_dispatch:
+  push:
+    branches: [ fmm ]
+    paths: [ ".github/workflows/a0_wheel_parity.yml" ]
 
 jobs:
   parity:
