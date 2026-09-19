@@ -84,14 +84,16 @@ Array FmmLsmPricer::basis(const Array& x) const {
 
 Real FmmLsmPricer::markDeflated(const ForwardMarketModel::State& st, const Size from, const Size to,
                                 const Real bank) const {
+    // time-0 deflated conditional expectation of the flows: E_t[flow_j / B(T_j)] = flow_j P(t,T_j) / B(t),
+    // times the deterministic issuer-spread factor to T_j - the same units as the realized
+    // deflated flows (a time-t-relative spread factor here would be inconsistent with them)
     const auto& p = *model_->parametrization();
-    const Real sdT = spreadDf(st.t);
     Real mark = 0.0;
     for (Size j = from + 1; j <= to; ++j) {
         const Real pj = model_->discountBond(st, p.rateTime(j));
         const Real pjm = model_->discountBond(st, p.rateTime(j - 1));
         mark += (instrument_.fixedFlows[j] * pj + instrument_.floatWeights[j] * (pjm - pj)) *
-                spreadDf(p.rateTime(j)) / sdT;
+                spreadDf(p.rateTime(j));
     }
     return mark / bank;
 }
@@ -100,7 +102,7 @@ Real FmmLsmPricer::feeDeflated(const ForwardMarketModel::State& st, const Size r
     const auto& p = *model_->parametrization();
     const auto& rt = instrument_.rights[r];
     return rt.feeFlow * model_->discountBond(st, p.rateTime(rt.settleIdx)) * spreadDf(p.rateTime(rt.settleIdx)) /
-           spreadDf(st.t) / bank;
+           bank;
 }
 
 Array FmmLsmPricer::regressorsAt(const ForwardMarketModel::State& st, const Size r, const Real bank) const {
@@ -296,6 +298,21 @@ FmmLsmResult FmmLsmPricer::valueWithPolicy(const FmmLsmPolicy& pol, const BigNat
     for (Size n = 0; n < val.size(); ++n)
         ex[n] = decideRight(val[n], pol);
     return summarize(val, ex);
+}
+
+void FmmLsmPricer::pathValues(const BigNatural seed, std::vector<Real>& values,
+                              std::vector<Real>& underlyingTotals) const {
+    QL_REQUIRE(policy_.coefficients.size() == instrument_.rights.size(),
+               "FmmLsmPricer::pathValues: no trained policy - call calculate() first");
+    const bool enter = instrument_.style == FmmCallableInstrument::Style::Enter;
+    std::vector<PathData> val;
+    simulate(config_.valuationPaths, seed, config_.valuationSequence, val);
+    values.resize(val.size());
+    underlyingTotals.resize(val.size());
+    for (Size n = 0; n < val.size(); ++n) {
+        values[n] = pathValueAt(val[n], decideRight(val[n], policy_));
+        underlyingTotals[n] = enter ? 0.0 : val[n].deflatedFlows[0];
+    }
 }
 
 std::pair<Real, Real> FmmLsmPricer::pairedPolicyDifference(const FmmLsmPolicy& importedPolicy,

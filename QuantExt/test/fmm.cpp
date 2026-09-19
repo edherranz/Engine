@@ -1299,6 +1299,34 @@ struct ReplicationBed {
     QuantLib::ext::shared_ptr<ForwardMarketModel> fmmModel;
 };
 
+// paired common-random-number identity Cancel == underlying + Enter: both pricers are valued on
+// the SAME paths (same seed and sequence), the realized underlying total is replaced path by path
+// by its curve value, and the pathwise difference is reported with its confidence interval. The
+// FMM's bank-account / floating-flow identities make the difference vanish on every path where
+// the two policies decide alike, so this isolates policy-decision differences. Absolute
+// tolerance per the revised validation contract, with the precision required to resolve it.
+void pairedIdentityCheck(const FmmLsmPricer& cancelPricer, const FmmLsmPricer& enterPricer,
+                         const Real underlyingCurve, const std::string& label, const Real optionValue,
+                         const BigNatural seed = 31337) {
+    std::vector<Real> vc, tc, ve, te;
+    cancelPricer.pathValues(seed, vc, tc);
+    enterPricer.pathValues(seed, ve, te);
+    BOOST_REQUIRE_EQUAL(vc.size(), ve.size());
+    IncrementalStatistics d;
+    for (Size n = 0; n < vc.size(); ++n)
+        d.add((vc[n] - tc[n] + underlyingCurve) - (underlyingCurve + ve[n]));
+    // absolute tolerance, unit notional: 0.5% of the embedded option value (floor 2e-5)
+    const Real tol = std::max(0.005 * std::fabs(optionValue), 2e-5);
+    BOOST_TEST_MESSAGE("PAIRED-CRN IDENTITY | " << label << " | Cancel - underlying - Enter on common paths: "
+                                                << d.mean() << " +/- " << d.errorEstimate() << " (95% CI ["
+                                                << d.mean() - 1.96 * d.errorEstimate() << ", "
+                                                << d.mean() + 1.96 * d.errorEstimate() << "]), absolute tolerance "
+                                                << tol << " (0.5% of the option value " << optionValue << ")");
+    BOOST_CHECK_MESSAGE(d.errorEstimate() < tol / 3.0,
+                        label << ": paired precision " << d.errorEstimate() << " cannot resolve the tolerance " << tol);
+    BOOST_CHECK_MESSAGE(std::fabs(d.mean()) < tol, label << ": paired identity difference " << d.mean() << " exceeds " << tol);
+}
+
 } // namespace
 
 BOOST_AUTO_TEST_CASE(testLsmEuropeanLimit) {
@@ -1320,12 +1348,17 @@ BOOST_AUTO_TEST_CASE(testLsmEuropeanLimit) {
     fillPayerSwapFlows(inst, *bed.parametrization, 8, 20, K);
     inst.rights.push_back({8, 8, 0.0});
 
-    FmmLsmPricer pricer(bed.model, inst);
+    FmmLsmConfig cfg;
+    cfg.valuationPaths = 262144; // sampling precision materially below 1% of the option value
+    FmmLsmPricer pricer(bed.model, inst, cfg);
     const auto res = pricer.calculate();
-    BOOST_TEST_MESSAGE("european limit: lsm " << res.lowerBound << " +/- " << res.lowerBoundSe << ", approx "
-                                              << apx.price << ", training " << res.trainingValue << ", runtime "
-                                              << res.runtimeSeconds << " s");
-    BOOST_CHECK_MESSAGE(std::fabs(res.lowerBound - apx.price) < 3.0 * res.lowerBoundSe + 2e-5,
+    BOOST_TEST_MESSAGE("european limit: lsm " << res.lowerBound << " +/- " << res.lowerBoundSe << " ("
+                                              << 100.0 * res.lowerBoundSe / apx.price << "% of value), approx "
+                                              << apx.price << ", diff " << res.lowerBound - apx.price << " (95% CI +/- "
+                                              << 1.96 * res.lowerBoundSe << "), training " << res.trainingValue
+                                              << ", runtime " << res.runtimeSeconds << " s");
+    BOOST_CHECK_MESSAGE(res.lowerBoundSe < 0.005 * apx.price, "sampling precision not below 0.5% of value");
+    BOOST_CHECK_MESSAGE(std::fabs(res.lowerBound - apx.price) < 3.0 * res.lowerBoundSe,
                         "european limit mismatch: " << res.lowerBound - apx.price);
 }
 
@@ -1379,7 +1412,18 @@ BOOST_AUTO_TEST_CASE(testLsmBermudanVsLgmGrid) {
         underlying, QuantLib::ext::make_shared<BermudanExercise>(exDates));
     swaption->setPricingEngine(QuantLib::ext::make_shared<NumericLgmSwaptionEngine>(
         Handle<LinearGaussMarkovModel>(lgmModel), 7.0, 100, 7.0, 100, curve));
-    const Real gridPrice = swaption->NPV();
+    const Real grid100 = swaption->NPV();
+    // reference-grid convergence, reported separately from the sampling precision
+    swaption->setPricingEngine(QuantLib::ext::make_shared<NumericLgmSwaptionEngine>(
+        Handle<LinearGaussMarkovModel>(lgmModel), 7.0, 200, 7.0, 200, curve));
+    const Real grid200 = swaption->NPV();
+    swaption->setPricingEngine(QuantLib::ext::make_shared<NumericLgmSwaptionEngine>(
+        Handle<LinearGaussMarkovModel>(lgmModel), 7.0, 400, 7.0, 400, curve));
+    const Real grid400 = swaption->NPV();
+    BOOST_TEST_MESSAGE("lgm grid convergence: 100 pts " << grid100 << ", 200 pts " << grid200 << ", 400 pts "
+                                                        << grid400 << " (100 - 400: " << grid100 - grid400
+                                                        << ", 200 - 400: " << grid200 - grid400 << ")");
+    const Real gridPrice = grid400;
 
     // FMM LSM on the identical structure
     FmmCallableInstrument inst;
@@ -1397,13 +1441,16 @@ BOOST_AUTO_TEST_CASE(testLsmBermudanVsLgmGrid) {
     }
     FmmLsmConfig cfg;
     cfg.trainingPaths = 32768;
-    cfg.valuationPaths = 32768;
+    cfg.valuationPaths = 262144; // sampling precision materially below 1% of the option value
     FmmLsmPricer pricer(fmmModel, inst, cfg);
     const auto res = pricer.calculate();
 
-    BOOST_TEST_MESSAGE("bermudan: lgm grid " << gridPrice << ", fmm lsm lower " << res.lowerBound << " +/- "
-                                             << res.lowerBoundSe << " (training " << res.trainingValue
-                                             << "), runtime " << res.runtimeSeconds << " s");
+    BOOST_TEST_MESSAGE("bermudan: lgm grid (400 pts) " << gridPrice << ", fmm lsm lower " << res.lowerBound << " +/- "
+                                                       << res.lowerBoundSe << " (" << 100.0 * res.lowerBoundSe / gridPrice
+                                                       << "% of value; diff " << res.lowerBound - gridPrice
+                                                       << ", 95% CI +/- " << 1.96 * res.lowerBoundSe << "; training "
+                                                       << res.trainingValue << "), runtime " << res.runtimeSeconds
+                                                       << " s");
     std::ostringstream probs;
     for (Size r = 0; r < res.exerciseProbability.size(); ++r)
         probs << " " << res.exerciseProbability[r] << "+/-" << res.exerciseProbabilitySe[r];
@@ -1411,12 +1458,12 @@ BOOST_AUTO_TEST_CASE(testLsmBermudanVsLgmGrid) {
                                                           << res.noExerciseProbability
                                                           << "; E[notice time | exercise] "
                                                           << res.expectedExerciseTime);
-    // lower-bound property and closeness (acceptance bound: max(3 s.e., 1% of option value))
+    // precision requirement, lower-bound property and statistical agreement (no tolerance floor)
+    BOOST_CHECK_MESSAGE(res.lowerBoundSe < 0.005 * gridPrice, "sampling precision not below 0.5% of value");
     BOOST_CHECK_MESSAGE(res.lowerBound < gridPrice + 3.0 * res.lowerBoundSe,
                         "lower bound above grid price: " << res.lowerBound - gridPrice);
-    const Real bound = std::max(3.0 * res.lowerBoundSe, 0.01 * gridPrice);
-    BOOST_CHECK_MESSAGE(std::fabs(res.lowerBound - gridPrice) < bound,
-                        "lsm vs grid: " << res.lowerBound - gridPrice << " outside " << bound);
+    BOOST_CHECK_MESSAGE(std::fabs(res.lowerBound - gridPrice) < 3.0 * res.lowerBoundSe,
+                        "lsm vs grid: " << res.lowerBound - gridPrice << " beyond 3 s.e. " << 3.0 * res.lowerBoundSe);
 }
 
 BOOST_AUTO_TEST_CASE(testLsmDualBoundBermudan) {
@@ -1536,7 +1583,8 @@ BOOST_AUTO_TEST_CASE(testLsmCancellableParity) {
                                                  << " +/- " << direct.lowerBoundCvSe << "; swap " << swapPv
                                                  << " + bermudan " << opt.lowerBound << " = " << rhs << "; diff "
                                                  << lhs - rhs << " vs 3 s.e. " << 3.0 * se);
-    BOOST_CHECK_MESSAGE(std::fabs(lhs - rhs) < 3.0 * se + 2e-5, "cancellable parity violated: " << lhs - rhs);
+    BOOST_CHECK_MESSAGE(std::fabs(lhs - rhs) < 3.0 * se, "cancellable parity violated: " << lhs - rhs);
+    pairedIdentityCheck(directPricer, optPricer, swapPv, "cancellable swap parity", opt.lowerBound);
 }
 
 namespace {
@@ -1607,7 +1655,8 @@ BOOST_AUTO_TEST_CASE(testLsmCallableBondIdentity) {
                                                       << "; straight bond " << bondRes.underlyingValue
                                                       << " + bermudan receiver " << optRes.lowerBound << " = " << rhs
                                                       << "; diff " << lhs - rhs << " vs 3 s.e. " << 3.0 * se);
-    BOOST_CHECK_MESSAGE(std::fabs(lhs - rhs) < 3.0 * se + 2e-5, "callable bond identity violated: " << lhs - rhs);
+    BOOST_CHECK_MESSAGE(std::fabs(lhs - rhs) < 3.0 * se, "callable bond identity violated: " << lhs - rhs);
+    pairedIdentityCheck(bondPricer, optPricer, bondRes.underlyingValue, "callable fixed bond", optRes.lowerBound);
     gapRow(bondPricer, "callable fixed bond 5y annual par calls (issuer)", bondRes.lowerBoundCv, bondRes.lowerBoundCvSe);
 
     // issuer spread 50 bp: liability PV magnitude shrinks (value less negative), option changes
@@ -1672,7 +1721,9 @@ BOOST_AUTO_TEST_CASE(testLsmAccretingNoteAndSwap) {
                                                       << "; zero liability " << noteRes.underlyingValue
                                                       << " + bermudan zero-bond option " << optRes.lowerBound << " = "
                                                       << rhs << "; diff " << lhs - rhs << " vs 3 s.e. " << 3.0 * se);
-    BOOST_CHECK_MESSAGE(std::fabs(lhs - rhs) < 3.0 * se + 2e-5, "accreting note identity violated: " << lhs - rhs);
+    BOOST_CHECK_MESSAGE(std::fabs(lhs - rhs) < 3.0 * se, "accreting note identity violated: " << lhs - rhs);
+    pairedIdentityCheck(notePricer, optPricer, noteRes.underlyingValue, "callable accreting zero note 5yNC2",
+                        optRes.lowerBound);
     std::ostringstream probs;
     for (Size r = 0; r < noteRes.exerciseProbability.size(); ++r)
         probs << " " << noteRes.exerciseProbability[r];
@@ -1712,7 +1763,9 @@ BOOST_AUTO_TEST_CASE(testLsmAccretingNoteAndSwap) {
                                                          << accSwapRes.lowerBoundCvSe << " vs swap+option "
                                                          << accSwapRes.underlyingValue + accRecvRes.lowerBound
                                                          << "; diff " << diffAcc << " vs 3 s.e. " << 3.0 * seAcc);
-    BOOST_CHECK_MESSAGE(std::fabs(diffAcc) < 3.0 * seAcc + 2e-5, "accreting swap parity violated: " << diffAcc);
+    BOOST_CHECK_MESSAGE(std::fabs(diffAcc) < 3.0 * seAcc, "accreting swap parity violated: " << diffAcc);
+    pairedIdentityCheck(accSwapPricer, accRecvPricer, accSwapRes.underlyingValue, "accreting cancellable swap 5yNC2",
+                        accRecvRes.lowerBound);
     gapRow(accSwapPricer, "accreting cancellable swap 5yNC2", accSwapRes.lowerBoundCv, accSwapRes.lowerBoundCvSe);
 }
 
@@ -1769,7 +1822,8 @@ BOOST_AUTO_TEST_CASE(testLsmStepUpNote) {
                                                     << "; straight " << noteRes.underlyingValue << " + bermudan receiver "
                                                     << optRes.lowerBound << " = " << rhs << "; diff " << lhs - rhs
                                                     << " vs 3 s.e. " << 3.0 * se);
-    BOOST_CHECK_MESSAGE(std::fabs(lhs - rhs) < 3.0 * se + 2e-5, "step-up note identity violated: " << lhs - rhs);
+    BOOST_CHECK_MESSAGE(std::fabs(lhs - rhs) < 3.0 * se, "step-up note identity violated: " << lhs - rhs);
+    pairedIdentityCheck(notePricer, optPricer, noteRes.underlyingValue, "callable step-up note", optRes.lowerBound);
     gapRow(notePricer, "callable step-up note 5y annual par calls (issuer)", noteRes.lowerBoundCv, noteRes.lowerBoundCvSe);
 }
 
@@ -1966,10 +2020,39 @@ BOOST_AUTO_TEST_CASE(testLsmCallableBondVsOreLgmEngine) {
                         "ORE call value below the FMM LSM (lower) estimate: " << oreOption - fmmOptionLsm);
     BOOST_CHECK_MESSAGE(oreOption < fmmOptionDual + 3.0 * dualSe,
                         "ORE call value above the FMM dual (upper) estimate: " << oreOption - fmmOptionDual);
-    // closeness of the LSM estimate: max(3 s.e., 1.5% of the embedded call value)
-    const Real bound = std::max(3.0 * lsm.lowerBoundCvSe, 0.015 * oreOption);
-    BOOST_CHECK_MESSAGE(std::fabs(fmmOptionLsm - oreOption) < bound,
-                        "FMM LSM vs ORE grid: " << fmmOptionLsm - oreOption << " outside " << bound);
+    // statistical agreement of the LSM estimate (no tolerance floor)
+    BOOST_CHECK_MESSAGE(std::fabs(fmmOptionLsm - oreOption) < 3.0 * lsm.lowerBoundCvSe,
+                        "FMM LSM vs ORE grid: " << fmmOptionLsm - oreOption << " beyond 3 s.e.");
+
+    // issuer spread 50 bp on both sides: ORE's discounting spread (zero spread on the effective
+    // discount curve) vs the FMM deterministic issuer spread
+    {
+        const Real s = 0.005;
+        auto oreSpread = QuantLib::ext::make_shared<CallableBond>(0, NullCalendar(), rb.asof, coupons, calls);
+        oreSpread->setPricingEngine(QuantLib::ext::make_shared<NumericLgmCallableBondEngine>(
+            Handle<LGM>(rb.lgmModel), 50.0, FdmSchemeDesc::Douglas(), 256, 48, 1e-4, 24, rb.curve,
+            Handle<Quote>(QuantLib::ext::make_shared<SimpleQuote>(s))));
+        const Real oreS = oreSpread->NPV();
+        const Real oreSStraight = oreSpread->result<Real>("strippedBondNpv");
+        const Real oreSOption = oreSpread->result<Real>("callPutValue");
+        FmmCallableInstrument bondS = bond;
+        bondS.issuerSpread = s;
+        FmmLsmPricer pricerS(rb.fmmModel, bondS, cfg);
+        const auto lsmS = pricerS.calculate();
+        const auto dualS = pricerS.dualBound(512, 64, 20260924);
+        const Real optS = lsmS.lowerBoundCv - lsmS.underlyingValue;
+        const Real optSUpper = optS + dualS.gap;
+        const Real seS = std::sqrt(lsmS.lowerBoundCvSe * lsmS.lowerBoundCvSe + dualS.gapSe * dualS.gapSe);
+        BOOST_TEST_MESSAGE("issuer spread 50 bp: ORE callable " << oreS << ", straight " << oreSStraight << ", call "
+                                                                << oreSOption << " | FMM straight " << -lsmS.underlyingValue
+                                                                << ", call LSM " << optS << " +/- " << lsmS.lowerBoundCvSe
+                                                                << ", + gap " << dualS.gap << " = " << optSUpper << " +/- "
+                                                                << seS);
+        BOOST_CHECK_MESSAGE(std::fabs(-lsmS.underlyingValue - oreSStraight) < 5e-5,
+                            "straight bond with spread mismatch: " << -lsmS.underlyingValue - oreSStraight);
+        BOOST_CHECK_MESSAGE(oreSOption > optS - 3.0 * lsmS.lowerBoundCvSe && oreSOption < optSUpper + 3.0 * seS,
+                            "ORE call value with spread outside the FMM bounds: " << oreSOption - optS);
+    }
 }
 
 BOOST_AUTO_TEST_CASE(testMultiFactorVsLgmCalibratedBasket) {
@@ -2105,6 +2188,21 @@ BOOST_AUTO_TEST_CASE(testMultiFactorVsLgmCalibratedBasket) {
     FmmLsmPricer pricer3f(model3f, makeInst(*fmm3f), cfg);
     const auto mf = pricer3f.calculate();
     const auto dual3f = pricer3f.dualBound(512, 64, 20260921);
+    // paired common random numbers: both models driven by the same Gaussian draws (seed 424242);
+    // the pathwise 3F - replication difference has far less noise than the unpaired difference
+    std::pair<Real, Real> paired3f;
+    {
+        std::vector<Real> v3, t3, vr, tr;
+        pricer3f.pathValues(cfg.valuationSeed, v3, t3);
+        repPricer.pathValues(cfg.valuationSeed, vr, tr);
+        IncrementalStatistics d;
+        for (Size n = 0; n < v3.size(); ++n)
+            d.add(v3[n] - vr[n]);
+        paired3f = {d.mean(), d.errorEstimate()};
+    }
+    BOOST_TEST_MESSAGE("PAIRED-CRN CHALLENGER | 3F - replication on common draws: "
+                       << paired3f.first << " +/- " << paired3f.second << " (" << 100.0 * paired3f.first / lgmBermudan
+                       << "% of value, 95% CI +/- " << 100.0 * 1.96 * paired3f.second / lgmBermudan << "%)");
 
     BOOST_TEST_MESSAGE("CHALLENGER ROW | bermudan payer 5y annual, shared coterminal basket | LGM grid "
                        << lgmBermudan << " | FMM-replication LSM " << rep.lowerBound << " +/- " << rep.lowerBoundSe
@@ -2210,6 +2308,127 @@ BOOST_AUTO_TEST_CASE(testLsmDualBoundProductionBudget) {
     const auto bondRes = bondPricer.calculate();
     rows(bondPricer, "callable fixed bond 5y annual par calls (issuer, replication)", bondRes.lowerBoundCv,
          bondRes.lowerBoundCvSe, Null<Real>());
+}
+
+BOOST_AUTO_TEST_CASE(testLsmAccretingNote30NC5) {
+    // minutes-long (30y semiannual grid, 25 annual rights): opt in with FMM_LONG_TESTS=1
+    if (std::getenv("FMM_LONG_TESTS") == nullptr) {
+        BOOST_TEST_MESSAGE("A4 product 4, 30Y non-call-5 accreting example: SKIPPED (set FMM_LONG_TESTS=1 to run)");
+        BOOST_CHECK(true);
+        return;
+    }
+    BOOST_TEST_MESSAGE("A4 product 4 (revised plan): 30Y non-call-5 callable accreting zero note, annual calls "
+                       "at accreted value; identity vs zero liability - Bermudan zero-bond option (independent "
+                       "and paired); matching accreting cancellable swap; gap row...");
+    Settings::instance().evaluationDate() = Date(19, September, 2026);
+    Handle<YieldTermStructure> curve(
+        QuantLib::ext::make_shared<FlatForward>(0, NullCalendar(), 0.03, Actual365Fixed()));
+    const Size M = 60; // semiannual grid to 30y
+    Array rateTimes(M + 1);
+    for (Size k = 0; k <= M; ++k)
+        rateTimes[k] = 0.5 * static_cast<Real>(k);
+    Array shifts(M, 2.0); // 1/tau
+    std::vector<Array> volLevels(M, Array(1, 0.0025));
+    auto param = QuantLib::ext::make_shared<FmmParametrization>(EURCurrency(), curve, rateTimes, shifts, Array(),
+                                                                volLevels,
+                                                                FmmParametrization::LocalVolType::DisplacedDiffusion,
+                                                                0.6, 0.08, 3);
+    auto model = QuantLib::ext::make_shared<ForwardMarketModel>(param);
+    const auto& p = *param;
+    const Real accRate = 0.032;
+    auto accreted = [&](const Time t) { return std::pow(1.0 + accRate, t); };
+    std::vector<Size> callIdx;
+    for (Size a = 10; a <= 58; a += 2)
+        callIdx.push_back(a); // 5y .. 29y annually
+
+    FmmCallableInstrument note;
+    note.style = FmmCallableInstrument::Style::Cancel;
+    note.lastFlowIdx = M;
+    note.fixedFlows.assign(M + 1, 0.0);
+    note.floatWeights.assign(M + 1, 0.0);
+    note.fixedFlows[M] = -accreted(p.rateTime(M));
+    for (const Size a : callIdx)
+        note.rights.push_back({a, a, -accreted(p.rateTime(a))});
+    FmmLsmConfig cfg;
+    cfg.trainingPaths = 16384;
+    cfg.valuationPaths = 16384;
+    FmmLsmPricer notePricer(model, note, cfg);
+    const auto noteRes = notePricer.calculate();
+
+    FmmCallableInstrument opt;
+    opt.style = FmmCallableInstrument::Style::Enter;
+    opt.lastFlowIdx = M;
+    opt.fixedFlows.assign(M + 1, 0.0);
+    opt.floatWeights.assign(M + 1, 0.0);
+    opt.fixedFlows[M] = +accreted(p.rateTime(M));
+    for (const Size a : callIdx)
+        opt.rights.push_back({a, a, -accreted(p.rateTime(a))});
+    FmmLsmConfig cfgB = cfg;
+    cfgB.trainingSeed = 333;
+    cfgB.valuationSeed = 444444;
+    FmmLsmPricer optPricer(model, opt, cfgB);
+    const auto optRes = optPricer.calculate();
+
+    const Real lhs = noteRes.lowerBoundCv;
+    const Real rhs = noteRes.underlyingValue + optRes.lowerBound;
+    const Real se =
+        std::sqrt(noteRes.lowerBoundCvSe * noteRes.lowerBoundCvSe + optRes.lowerBoundSe * optRes.lowerBoundSe);
+    std::ostringstream probs;
+    for (Size r = 0; r < noteRes.exerciseProbability.size(); ++r)
+        probs << " " << noteRes.exerciseProbability[r];
+    BOOST_TEST_MESSAGE("30NC5 accreting note (cv) " << lhs << " +/- " << noteRes.lowerBoundCvSe << "; zero liability "
+                                                    << noteRes.underlyingValue << " + bermudan zero-bond option "
+                                                    << optRes.lowerBound << " +/- " << optRes.lowerBoundSe << " = " << rhs
+                                                    << "; diff " << lhs - rhs << " vs 3 s.e. " << 3.0 * se << "; runtime "
+                                                    << noteRes.runtimeSeconds + optRes.runtimeSeconds << " s");
+    BOOST_TEST_MESSAGE("30NC5 call probabilities (5y..29y):" << probs.str() << "; never " << noteRes.noExerciseProbability
+                                                            << "; E[notice | call] " << noteRes.expectedExerciseTime);
+    BOOST_CHECK_MESSAGE(std::fabs(lhs - rhs) < 3.0 * se, "30NC5 accreting note identity violated: " << lhs - rhs);
+    pairedIdentityCheck(notePricer, optPricer, noteRes.underlyingValue, "30NC5 accreting note", optRes.lowerBound);
+    {
+        const auto dual = notePricer.dualBound(256, 32, 20260925);
+        const Real upper = noteRes.lowerBoundCv + dual.gap;
+        const Real upperSe = std::sqrt(noteRes.lowerBoundCvSe * noteRes.lowerBoundCvSe + dual.gapSe * dual.gapSe);
+        BOOST_TEST_MESSAGE("DUALITY-GAP ROW | callable accreting zero note 30NC5 (issuer) | lower(16k, cv) " << lhs
+                           << " +/- " << noteRes.lowerBoundCvSe << " | gap " << dual.gap << " +/- " << dual.gapSe
+                           << " | upper = lower + gap " << upper << " +/- " << upperSe << " | outer 256 x inner 32 | "
+                           << dual.runtimeSeconds << " s");
+        BOOST_CHECK_MESSAGE(dual.gap > -3.0 * dual.gapSe, "30NC5: negative duality gap beyond noise: " << dual.gap);
+    }
+
+    // matching accreting cancellable swap: notional accretes, annual fixed coupon accRate on the
+    // accreted notional, semiannual float on the accreted notional; cancel rights as the calls
+    FmmCallableInstrument accSwap;
+    accSwap.style = FmmCallableInstrument::Style::Cancel;
+    accSwap.lastFlowIdx = M;
+    accSwap.fixedFlows.assign(M + 1, 0.0);
+    accSwap.floatWeights.assign(M + 1, 0.0);
+    for (Size j = 1; j <= M; ++j)
+        accSwap.floatWeights[j] = accreted(p.rateTime(j - 1));
+    for (Size c = 2; c <= M; c += 2)
+        accSwap.fixedFlows[c] = -accRate * (p.rateTime(c) - p.rateTime(c - 2)) * accreted(p.rateTime(c - 2));
+    for (const Size a : callIdx)
+        accSwap.rights.push_back({a, a, 0.0});
+    FmmLsmPricer accSwapPricer(model, accSwap, cfg);
+    const auto accSwapRes = accSwapPricer.calculate();
+    FmmCallableInstrument accRecv = accSwap;
+    accRecv.style = FmmCallableInstrument::Style::Enter;
+    for (Size j = 1; j <= M; ++j) {
+        accRecv.floatWeights[j] *= -1.0;
+        accRecv.fixedFlows[j] *= -1.0;
+    }
+    FmmLsmPricer accRecvPricer(model, accRecv, cfgB);
+    const auto accRecvRes = accRecvPricer.calculate();
+    const Real diffAcc = accSwapRes.lowerBoundCv - (accSwapRes.underlyingValue + accRecvRes.lowerBound);
+    const Real seAcc = std::sqrt(accSwapRes.lowerBoundCvSe * accSwapRes.lowerBoundCvSe +
+                                 accRecvRes.lowerBoundSe * accRecvRes.lowerBoundSe);
+    BOOST_TEST_MESSAGE("30NC5 accreting cancellable swap (cv) " << accSwapRes.lowerBoundCv << " +/- "
+                                                                << accSwapRes.lowerBoundCvSe << " vs swap+option "
+                                                                << accSwapRes.underlyingValue + accRecvRes.lowerBound
+                                                                << "; diff " << diffAcc << " vs 3 s.e. " << 3.0 * seAcc);
+    BOOST_CHECK_MESSAGE(std::fabs(diffAcc) < 3.0 * seAcc, "30NC5 accreting swap parity violated: " << diffAcc);
+    pairedIdentityCheck(accSwapPricer, accRecvPricer, accSwapRes.underlyingValue, "30NC5 accreting cancellable swap",
+                        accRecvRes.lowerBound);
 }
 
 BOOST_AUTO_TEST_CASE(testShiftAdmissibilityGuard) {

@@ -145,6 +145,11 @@ public:
     //! of this instrument (mean, standard error)
     std::pair<Real, Real> pairedImportedDecisionDifference(const FmmLsmPricer& policyOwner,
                                                            const BigNatural seed) const;
+    //! per-path deflated values of this instrument under the trained policy on the valuation
+    //! paths of `seed` (two pricers on the same model, last flow index, sequence and seed see the
+    //! SAME paths), with the realized deflated underlying totals (Cancel style; zeros for Enter)
+    //! - for paired common-random-number comparisons and identities
+    void pathValues(const BigNatural seed, std::vector<Real>& values, std::vector<Real>& underlyingTotals) const;
     //! Andersen-Broadie dual upper bound for the trained policy (A4 acceptance 4), nested
     //! simulation with innerPaths sub-paths at each right of each of outerPaths outer paths.
     //! Rights with a notice period (settleIdx > noticeIdx) use the adapted exercise payoff: the
