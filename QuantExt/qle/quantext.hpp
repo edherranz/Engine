@@ -327,6 +327,8 @@
 #include <qle/models/eqbspiecewiseconstantparametrization.hpp>
 #include <qle/models/exactbachelierimpliedvolatility.hpp>
 #include <qle/models/extendedconstantlosslatentmodel.hpp>
+#include <qle/models/fmmparametrization.hpp>
+#include <qle/models/forwardmarketmodel.hpp>
 #include <qle/models/futureoptionhelper.hpp>
 #include <qle/models/fxbsconstantparametrization.hpp>
 #include <qle/models/fxbsmodel.hpp>

@@ -1,4 +1,4 @@
-# Portability check for the fmm branch (CLAUDE.md §4.4): compile the fork and run the
+﻿# Portability check for the fmm branch (CLAUDE.md section 4.4): compile the fork and run the
 # FMM-relevant QuantExt test suites on Linux/GCC. Dependency set and configure flags mirror
 # ORE's own linux_build.yaml at tag 1.8.17.0; the build is narrowed to the QuantExt test
 # target to keep CI times sane. Extend TEST_FILTER as new FMM suites are added.
@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
 
 env:
-  TEST_FILTER: "QuantExtTestSuite/LgmPricingCases:QuantExtTestSuite/LgmPricingEdgeCases:QuantExtTestSuite/AnalyticLgmSwaptionEngineTest:QuantExtTestSuite/hwnfTest"
+  TEST_FILTER: "QuantExtTestSuite/LgmPricingCases:QuantExtTestSuite/LgmPricingEdgeCases:QuantExtTestSuite/AnalyticLgmSwaptionEngineTest:QuantExtTestSuite/hwnfTest:QuantExtTestSuite/FmmModelTest"
 
 jobs:
   build-test:
@@ -57,3 +57,5 @@ jobs:
     - name: run test suites
       run: |
         ./build/QuantExt/test/quantext-test-suite --log_level=message --report_level=short --run_test="${TEST_FILTER}"
+
+
