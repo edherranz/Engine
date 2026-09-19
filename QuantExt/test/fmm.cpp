@@ -44,6 +44,8 @@
 #include <ql/indexes/iborindex.hpp>
 #include <ql/instruments/makevanillaswap.hpp>
 #include <ql/instruments/swaption.hpp>
+#include <ql/math/optimization/levenbergmarquardt.hpp>
+#include <ql/models/shortrate/calibrationhelpers/swaptionhelper.hpp>
 #include <ql/pricingengines/swap/discountingswapengine.hpp>
 #include <ql/time/schedule.hpp>
 
@@ -1772,6 +1774,161 @@ BOOST_AUTO_TEST_CASE(testExerciseTransferConfigurable) {
     BOOST_CHECK_MESSAGE(paired.first > -3.0 * paired.second - 2e-5,
                         "own policy worse than imported beyond noise: " << paired.first);
     // joint package optimization is intentionally NOT performed here (kept distinct per owner)
+}
+
+BOOST_AUTO_TEST_CASE(testMultiFactorVsLgmCalibratedBasket) {
+    BOOST_TEST_MESSAGE("A4 acceptance 5: 3-factor FMM vs 1F LGM, both calibrated to the SAME "
+                       "coterminal basket (real USD-SOFR ATM vols); differences reported, not tuned...");
+
+    const Date asof(19, September, 2026);
+    Settings::instance().evaluationDate() = asof;
+    Handle<YieldTermStructure> curve(
+        QuantLib::ext::make_shared<FlatForward>(0, NullCalendar(), 0.03, Actual365Fixed()));
+    const Actual365Fixed dc;
+    const Date end = asof + Period(5, Years);
+    const Schedule quarterly(asof, end, Period(3, Months), NullCalendar(), Unadjusted, Unadjusted,
+                             DateGeneration::Forward, false);
+    const Size M = quarterly.size() - 1;
+    Array rateTimes(M + 1);
+    for (Size k = 0; k <= M; ++k)
+        rateTimes[k] = dc.yearFraction(asof, quarterly[k]);
+    auto index = QuantLib::ext::make_shared<IborIndex>("FMMTEST", Period(3, Months), 0, EURCurrency(),
+                                                       NullCalendar(), Unadjusted, false, dc, curve);
+
+    // shared basket: coterminal-to-5y ATM normal vols (Products marketdata.csv, 2025-02-10)
+    const std::vector<std::pair<Size, Real>> basket = {
+        {4, 0.01029015}, {8, 0.0105039}, {12, 0.0105350}, {16, 0.0104501}};
+
+    // ---- LGM: piecewise-constant alpha at the basket expiries, kappa 0.01, ORE helpers ----
+    Array alphaTimes(3);
+    alphaTimes[0] = rateTimes[4];
+    alphaTimes[1] = rateTimes[8];
+    alphaTimes[2] = rateTimes[12];
+    auto lgmParam = QuantLib::ext::make_shared<IrLgm1fPiecewiseConstantParametrization>(
+        EURCurrency(), curve, alphaTimes, Array(4, 0.01), Array(), Array(1, 0.01));
+    auto lgmModel = QuantLib::ext::make_shared<LinearGaussMarkovModel>(lgmParam);
+    auto lgmEngine = QuantLib::ext::make_shared<AnalyticLgmSwaptionEngine>(lgmParam, curve);
+    std::vector<QuantLib::ext::shared_ptr<BlackCalibrationHelper>> helpers;
+    for (const auto& b : basket) {
+        auto h = QuantLib::ext::make_shared<SwaptionHelper>(
+            Period(b.first / 4, Years), Period(5 - b.first / 4, Years),
+            Handle<Quote>(QuantLib::ext::make_shared<SimpleQuote>(b.second)), index, Period(1, Years), dc, dc,
+            curve, BlackCalibrationHelper::RelativePriceError, Null<Real>(), 1.0, Normal, 0.0);
+        h->setPricingEngine(lgmEngine);
+        helpers.push_back(h);
+    }
+    LevenbergMarquardt lm;
+    EndCriteria ec(1000, 100, 1e-8, 1e-8, 1e-8);
+    lgmModel->calibrateVolatilitiesIterative(helpers, lm, ec);
+    Real worstLgmBp = 0.0;
+    for (Size i = 0; i < helpers.size(); ++i) {
+        const Real mv = helpers[i]->marketValue(), model = helpers[i]->modelValue();
+        const Real relErr = (model - mv) / mv;
+        BOOST_TEST_MESSAGE("LGM calib helper " << i << ": market " << mv << " model " << model << " rel err "
+                                                << relErr);
+        worstLgmBp = std::max(worstLgmBp, std::fabs(relErr));
+    }
+    BOOST_CHECK_MESSAGE(worstLgmBp < 1e-3, "LGM calibration did not converge: worst rel err " << worstLgmBp);
+
+    // ---- FMM 3F: strategy (b) to the same basket (exact), correlation rhoInf 0.6 / beta 0.08 ----
+    Array shifts(M);
+    for (Size j = 1; j <= M; ++j)
+        shifts[j - 1] = 1.0 / (rateTimes[j] - rateTimes[j - 1]);
+    std::vector<Array> levels(M, Array(4, 0.0025));
+    auto fmm3f = QuantLib::ext::make_shared<FmmParametrization>(EURCurrency(), curve, rateTimes, shifts, alphaTimes,
+                                                                levels,
+                                                                FmmParametrization::LocalVolType::DisplacedDiffusion,
+                                                                0.6, 0.08, 3);
+    std::vector<FmmSwaptionVolTarget> targets;
+    for (const auto& b : basket) {
+        FmmSwaptionVolTarget t;
+        t.swap.a = b.first;
+        t.swap.b = M;
+        for (Size c = b.first + 4; c <= M; c += 4) {
+            t.swap.fixedPayIndices.push_back(c);
+            t.swap.fixedAccruals.push_back(rateTimes[c] - rateTimes[c - 4]);
+        }
+        t.normalVol = b.second;
+        targets.push_back(t);
+    }
+    FmmSeparableVols v;
+    v.segmentTimes = alphaTimes;
+    v.a = {1.0, 1.0, 1.0, 1.0};
+    v.levels.assign(M, 0.0025);
+    fmmSwaptionTimeDependenceBootstrap(*fmm3f, v, targets);
+    Real worstFmmBp = 0.0;
+    for (const auto& t : targets)
+        worstFmmBp = std::max(
+            worstFmmBp,
+            std::fabs(fmmSwaptionApprox(*fmm3f, t.swap, fmmForwardSwapRate(*fmm3f, t.swap)).normalVol - t.normalVol) * 1e4);
+    BOOST_TEST_MESSAGE("FMM 3F calibration worst residual " << worstFmmBp << " bp; a(t) = {" << v.a[0] << ", " << v.a[1]
+                                                           << ", " << v.a[2] << ", " << v.a[3] << "}");
+    BOOST_CHECK_MESSAGE(worstFmmBp < 0.01, "FMM calibration residual " << worstFmmBp << " bp");
+
+    // ---- the benchmark trade: Bermudan payer, ATM on the 5y swap, annual exercise ----
+    const Schedule fixedSched(asof, end, Period(1, Years), NullCalendar(), Unadjusted, Unadjusted,
+                              DateGeneration::Forward, false);
+    const Schedule floatSched(asof, end, Period(3, Months), NullCalendar(), Unadjusted, Unadjusted,
+                              DateGeneration::Forward, false);
+    VanillaSwap probe(VanillaSwap::Payer, 1.0, fixedSched, 0.03, dc, floatSched, index, 0.0, dc);
+    probe.setPricingEngine(QuantLib::ext::make_shared<DiscountingSwapEngine>(curve));
+    const Real K = probe.fairRate();
+    std::vector<Date> exDates = {quarterly[4], quarterly[8], quarterly[12], quarterly[16]};
+    auto underlying = QuantLib::ext::make_shared<VanillaSwap>(VanillaSwap::Payer, 1.0, fixedSched, K, dc, floatSched,
+                                                              index, 0.0, dc);
+    auto swaption = QuantLib::ext::make_shared<Swaption>(
+        underlying, QuantLib::ext::make_shared<BermudanExercise>(exDates));
+    swaption->setPricingEngine(QuantLib::ext::make_shared<NumericLgmSwaptionEngine>(
+        Handle<LinearGaussMarkovModel>(lgmModel), 7.0, 100, 7.0, 100, curve));
+    const Real lgmBermudan = swaption->NPV();
+
+    auto makeInst = [&](const FmmParametrization& p) {
+        FmmCallableInstrument inst;
+        inst.style = FmmCallableInstrument::Style::Enter;
+        fillPayerSwapFlows(inst, p, 0, M, K);
+        for (const Size a : {4, 8, 12, 16})
+            inst.rights.push_back({a, a, 0.0});
+        for (Size j = 1; j <= 4; ++j) {
+            inst.floatWeights[j] = 0.0;
+            inst.fixedFlows[j] = 0.0;
+        }
+        return inst;
+    };
+    FmmLsmConfig cfg;
+    cfg.trainingPaths = 32768;
+    cfg.valuationPaths = 32768;
+
+    // replication-mode FMM of the CALIBRATED LGM: the attribution anchor (must match the grid)
+    auto fmmRep = QuantLib::ext::make_shared<FmmParametrization>(EURCurrency(), curve, rateTimes, lgmParam);
+    auto repModel = QuantLib::ext::make_shared<ForwardMarketModel>(fmmRep);
+    FmmLsmPricer repPricer(repModel, makeInst(*fmmRep), cfg);
+    const auto rep = repPricer.calculate();
+
+    // multi-factor FMM on the same basket
+    auto model3f = QuantLib::ext::make_shared<ForwardMarketModel>(fmm3f);
+    FmmLsmPricer pricer3f(model3f, makeInst(*fmm3f), cfg);
+    const auto mf = pricer3f.calculate();
+    const auto dual3f = pricer3f.dualBound(512, 64, 20260921);
+
+    BOOST_TEST_MESSAGE("CHALLENGER ROW | bermudan payer 5y annual, shared coterminal basket | LGM grid "
+                       << lgmBermudan << " | FMM-replication LSM " << rep.lowerBound << " +/- " << rep.lowerBoundSe
+                       << " | FMM-3F LSM lower " << mf.lowerBound << " +/- " << mf.lowerBoundSe << ", AB upper "
+                       << dual3f.upperBound << " +/- " << dual3f.upperBoundSe);
+    BOOST_TEST_MESSAGE("3F minus LGM: " << mf.lowerBound - lgmBermudan << " (" << 100.0 * (mf.lowerBound - lgmBermudan) / lgmBermudan
+                                        << "% of value); exercise probs 3F:" << mf.exerciseProbability[0] << " "
+                                        << mf.exerciseProbability[1] << " " << mf.exerciseProbability[2] << " "
+                                        << mf.exerciseProbability[3] << " vs replication:" << rep.exerciseProbability[0]
+                                        << " " << rep.exerciseProbability[1] << " " << rep.exerciseProbability[2] << " "
+                                        << rep.exerciseProbability[3]);
+    BOOST_TEST_MESSAGE("attribution: both models reprice the same 4 ATM coterminals (LGM rel err < 1e-3, FMM < 0.01 bp); "
+                       "the residual difference is the multi-factor (decorrelation) effect plus the DD-vs-Gaussian "
+                       "distribution of forward rates at the shift 1/tau, not implementation noise "
+                       "(replication anchor vs grid: " << rep.lowerBound - lgmBermudan << ")");
+    // the anchor must reproduce the LGM grid within the LSM tolerance
+    BOOST_CHECK_MESSAGE(std::fabs(rep.lowerBound - lgmBermudan) < std::max(3.0 * rep.lowerBoundSe, 0.01 * lgmBermudan),
+                        "replication anchor off the LGM grid: " << rep.lowerBound - lgmBermudan);
+    // no assertion on the 3F difference: it is a reported finding by design (do not tune away)
+    BOOST_CHECK(dual3f.upperBound > mf.lowerBound - 3.0 * (dual3f.upperBoundSe + mf.lowerBoundSe));
 }
 
 BOOST_AUTO_TEST_CASE(testShiftAdmissibilityGuard) {
