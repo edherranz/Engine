@@ -223,6 +223,7 @@ models/eqbsconstantparametrization.cpp
 models/eqbsparametrization.cpp
 models/eqbspiecewiseconstantparametrization.cpp
 models/exactbachelierimpliedvolatility.cpp
+models/fmmanalytics.cpp
 models/fmmparametrization.cpp
 models/forwardmarketmodel.cpp
 models/futureoptionhelper.cpp
@@ -812,6 +813,7 @@ models/eqbsparametrization.hpp
 models/eqbspiecewiseconstantparametrization.hpp
 models/exactbachelierimpliedvolatility.hpp
 models/extendedconstantlosslatentmodel.hpp
+models/fmmanalytics.hpp
 models/fmmparametrization.hpp
 models/forwardmarketmodel.hpp
 models/futureoptionhelper.hpp

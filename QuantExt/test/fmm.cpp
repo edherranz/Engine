@@ -30,6 +30,7 @@
 #include <ql/time/calendars/nullcalendar.hpp>
 #include <ql/time/daycounters/actual365fixed.hpp>
 
+#include <qle/models/fmmanalytics.hpp>
 #include <qle/models/fmmparametrization.hpp>
 #include <qle/models/forwardmarketmodel.hpp>
 #include <qle/models/irlgm1fconstantparametrization.hpp>
@@ -780,6 +781,107 @@ BOOST_AUTO_TEST_CASE(testSkewSaturationOnMarketShapedData) {
     BOOST_CHECK_MESSAGE(0.0105458 - modelAt3 > 0.0002,
                         "expected reported curvature residual > 2bp at the wings, got "
                             << (0.0105458 - modelAt3) * 1e4 << " bp");
+}
+
+BOOST_AUTO_TEST_CASE(testSwaptionApproxAccuracyTable) {
+    BOOST_TEST_MESSAGE("A3 acceptance 1: frozen-gradient swaption approximation vs MC over an "
+                       "expiry x tenor x strike grid; randomized-Sobol replications for ~0.1bp "
+                       "reference uncertainty at ATM...");
+
+    struct Cfg {
+        FmmParametrization::LocalVolType type;
+        Real level, shift;
+        const char* label;
+    };
+    const std::vector<Cfg> cfgs = {{FmmParametrization::LocalVolType::DisplacedDiffusion, 0.0025, -1.0, "DD 1/tau"},
+                                   {FmmParametrization::LocalVolType::DisplacedDiffusion, 0.15, 0.02, "DD 2%"}};
+
+    const std::vector<Size> expiries = {4, 8, 12};      // 1y, 2y, 3y
+    const std::vector<Size> tenors = {4, 8};            // 1y, 2y
+    const Size reps = 8, pathsPerRep = 16384;
+
+    Real worstAtm = 0.0, worstAny = 0.0;
+    std::string worstAtmCell, worstAnyCell;
+
+    for (const auto& cfg : cfgs) {
+        FmmTestBed bed(cfg.type, cfg.level, cfg.shift, 3);
+        for (const Size a : expiries) {
+            const Time Te = bed.parametrization->rateTime(a);
+            // one simulation batch per expiry serves every (tenor, strike) cell
+            std::vector<FmmSwapSpec> swaps;
+            for (const Size len : tenors) {
+                FmmSwapSpec s;
+                s.a = a;
+                s.b = a + len;
+                for (Size c = a + 4; c <= s.b; c += 4) {
+                    s.fixedPayIndices.push_back(c);
+                    s.fixedAccruals.push_back(1.0);
+                }
+                swaps.push_back(s);
+            }
+            // per replication r: scrambled-Sobol batch; statistics of the replication means
+            std::vector<std::vector<IncrementalStatistics>> repMeans(swaps.size(),
+                                                                     std::vector<IncrementalStatistics>(3));
+            for (Size r = 0; r < reps; ++r) {
+                FmmPathGenerator gen(bed.model, {Te}, Burley2020Sobol, 7000 + 13 * r);
+                std::vector<std::vector<IncrementalStatistics>> acc(swaps.size(),
+                                                                    std::vector<IncrementalStatistics>(3));
+                for (Size n = 0; n < pathsPerRep; ++n) {
+                    const auto path = gen.next();
+                    const auto& st = path.states[0];
+                    const Real bank = bed.model->bankAccount(st);
+                    for (Size sw = 0; sw < swaps.size(); ++sw) {
+                        Real A = 0.0;
+                        for (Size c = 0; c < swaps[sw].fixedPayIndices.size(); ++c)
+                            A += swaps[sw].fixedAccruals[c] *
+                                 bed.model->discountBond(st, bed.parametrization->rateTime(swaps[sw].fixedPayIndices[c]));
+                        const Real S = (1.0 - bed.model->discountBond(st, bed.parametrization->rateTime(swaps[sw].b))) / A;
+                        const Real S0 = fmmForwardSwapRate(*bed.parametrization, swaps[sw]);
+                        const std::vector<Real> strikes = {S0 - 0.01, S0, S0 + 0.01};
+                        for (Size ki = 0; ki < 3; ++ki)
+                            acc[sw][ki].add(A * std::max(S - strikes[ki], 0.0) / bank);
+                    }
+                }
+                for (Size sw = 0; sw < swaps.size(); ++sw)
+                    for (Size ki = 0; ki < 3; ++ki)
+                        repMeans[sw][ki].add(acc[sw][ki].mean());
+            }
+            for (Size sw = 0; sw < swaps.size(); ++sw) {
+                const Real S0 = fmmForwardSwapRate(*bed.parametrization, swaps[sw]);
+                const Real A0 = fmmAnnuity(*bed.parametrization, swaps[sw]);
+                const std::vector<Real> strikes = {S0 - 0.01, S0, S0 + 0.01};
+                const std::vector<const char*> kLab = {"-100", "atm", "+100"};
+                for (Size ki = 0; ki < 3; ++ki) {
+                    const auto apx = fmmSwaptionApprox(*bed.parametrization, swaps[sw], strikes[ki]);
+                    const Real mcPrice = repMeans[sw][ki].mean();
+                    const Real mcSe = repMeans[sw][ki].errorEstimate();
+                    const Real mcVol =
+                        bachelierBlackFormulaImpliedVol(Option::Call, strikes[ki], S0, Te, mcPrice / A0);
+                    const Real volLo =
+                        bachelierBlackFormulaImpliedVol(Option::Call, strikes[ki], S0, Te, (mcPrice - mcSe) / A0);
+                    const Real volSe = std::fabs(mcVol - volLo); // 1-s.e. uncertainty in vol space
+                    const Real diffBp = (apx.normalVol - mcVol) * 1e4;
+                    std::ostringstream cell;
+                    cell << cfg.label << " " << Te << "y x " << 0.25 * (swaps[sw].b - swaps[sw].a) << "y " << kLab[ki];
+                    BOOST_TEST_MESSAGE(cell.str() << ": approx " << apx.normalVol * 1e4 << " bp, mc " << mcVol * 1e4
+                                                  << " +/- " << volSe * 1e4 << " bp, diff " << diffBp << " bp");
+                    if (ki == 1 && std::fabs(diffBp) > std::fabs(worstAtm)) {
+                        worstAtm = diffBp;
+                        worstAtmCell = cell.str();
+                    }
+                    if (std::fabs(diffBp) > std::fabs(worstAny)) {
+                        worstAny = diffBp;
+                        worstAnyCell = cell.str();
+                    }
+                    if (ki == 1)
+                        BOOST_CHECK_MESSAGE(std::fabs(diffBp) < 1.0 + 3.0 * volSe * 1e4,
+                                            cell.str() << ": ATM approximation error " << diffBp << " bp");
+                }
+            }
+        }
+    }
+    BOOST_TEST_MESSAGE("WORST ATM CELL: " << worstAtmCell << " (" << worstAtm << " bp); WORST ANY: " << worstAnyCell
+                                          << " (" << worstAny << " bp)");
 }
 
 BOOST_AUTO_TEST_CASE(testShiftAdmissibilityGuard) {
