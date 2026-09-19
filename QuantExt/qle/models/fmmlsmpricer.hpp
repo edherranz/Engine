@@ -19,10 +19,9 @@
 /*! \file fmmlsmpricer.hpp
     \brief Longstaff-Schwartz pricer for on-grid Bermudan-callable structures under the FMM:
            independent training and valuation path sets with the exercise policy frozen before
-           valuation (lower-bound estimator), exercise statistics as first-class outputs, and an
-           exported policy for imported-policy (exercise-transfer) scenarios. Owner rulings
-           2026-09-19 baked in; Andersen-Broadie dual upper bound is a separate, explicitly
-           outstanding A4 acceptance item.
+           valuation (lower-bound estimator), exercise statistics as first-class outputs, imported
+           policies / imported decisions for exercise-transfer scenarios, and the Andersen-Broadie
+           dual upper bound by nested simulation. Owner rulings 2026-09-19 baked in.
     \ingroup models
 */
 
@@ -71,7 +70,9 @@ struct FmmLsmConfig {
 };
 
 //! trained exercise policy: regression coefficients per right on the basis of the regressors
-//! (coterminal-to-maturity par rate, front rate, deflated mark of the switched flows)
+//! (coterminal-to-maturity par rate, front rate, deflated intrinsic exercise value). The
+//! regression is fitted on, and the policy only ever exercises in, the in-the-money domain
+//! (intrinsic value > 0) for both instrument styles.
 struct FmmLsmPolicy {
     std::vector<Array> coefficients; //!< per right; empty entry = never exercise at that right
     Size basisOrder = 2;
@@ -80,9 +81,21 @@ struct FmmLsmPolicy {
 //! Andersen-Broadie (2004) primal-dual result: the frozen-policy lower bound, the dual upper
 //! bound from the policy-induced martingale estimated by nested simulation, and the gap
 struct FmmDualBoundResult {
-    Real lowerBound = 0.0, lowerBoundSe = 0.0;
+    Real lowerBound = 0.0, lowerBoundSe = 0.0; //!< policy value on the outer paths (small sample)
+    //! duality gap E[max_r (h_r - M_r)] - V_0(policy) with the regret-only standard error: the
+    //! outer-sample policy value enters every dual term as an exact constant (the term at the
+    //! policy's own exercise date telescopes to it), so the gap is estimated far more precisely
+    //! than the raw upper bound. Tight upper bound = a precise lower bound (e.g. the LSM
+    //! valuation on 32k paths) + gap, standard errors combined in quadrature.
+    Real gap = 0.0, gapSe = 0.0;
+    //! lowerBound + gap on the outer sample; its s.e. (in quadrature) is dominated by the small-
+    //! sample noise of lowerBound - prefer lower(precise) + gap
     Real upperBound = 0.0, upperBoundSe = 0.0;
-    Real gap = 0.0, gapSe = 0.0; //!< upper - lower (paired on the outer paths)
+    //! the same with the underlying-flow control variate (Cancel style; equal to the raw values
+    //! for Enter): the realized deflated underlying total, whose mean is known exactly from the
+    //! curve, is subtracted path by path (the gap is unchanged by it)
+    Real lowerBoundCv = 0.0, lowerBoundCvSe = 0.0;
+    Real upperBoundCv = 0.0, upperBoundCvSe = 0.0;
     Size outerPaths = 0, innerPaths = 0;
     Real runtimeSeconds = 0.0;
 };
@@ -90,6 +103,11 @@ struct FmmDualBoundResult {
 struct FmmLsmResult {
     Real lowerBound = 0.0;    //!< frozen-policy value on the independent valuation paths
     Real lowerBoundSe = 0.0;
+    //! control-variate value (Cancel style): lowerBound - (underlyingValueMc - underlyingValue),
+    //! i.e. the realized underlying total is replaced by its exact curve value path by path; the
+    //! remaining noise is that of the exercise component only. Equal to lowerBound for Enter.
+    Real lowerBoundCv = 0.0, lowerBoundCvSe = 0.0;
+    Real underlyingValueMc = 0.0, underlyingValueMcSe = 0.0; //!< MC mean of the underlying total (Cancel)
     Real trainingValue = 0.0; //!< in-sample estimate (diagnostic only; upward-biased)
     std::vector<Real> exerciseProbability;   //!< per right, unconditional, valuation paths
     std::vector<Real> exerciseProbabilitySe;
@@ -108,23 +126,40 @@ public:
     FmmLsmResult calculate();
     //! the policy trained by the last calculate() call
     const FmmLsmPolicy& policy() const { return policy_; }
-    //! value THIS instrument under an imported (externally trained) policy on independent paths;
-    //! the imported policy's rights must align 1:1 with this instrument's rights. Used for the
-    //! exercise-transfer scenario (configurable, not a claim about universal practice).
+    //! value THIS instrument under an imported (externally trained) policy on independent paths,
+    //! i.e. the imported regression coefficients applied to THIS instrument's regressors; the
+    //! imported policy's rights must align 1:1 with this instrument's rights. Meaningful when
+    //! the regressors of the two instruments are comparable.
     FmmLsmResult valueWithPolicy(const FmmLsmPolicy& importedPolicy, const BigNatural seed) const;
     //! paired difference on COMMON valuation paths between own-policy and imported-policy values
     //! of this instrument: mean, standard error (the exercise-mismatch value with a paired CI)
     std::pair<Real, Real> pairedPolicyDifference(const FmmLsmPolicy& importedPolicy, const BigNatural seed) const;
+    //! exercise-transfer scenario (configurable, not a claim about universal practice): THIS
+    //! instrument is exercised whenever the policy OWNER's frozen policy exercises the owner's
+    //! own instrument on the same path (the decisions are imported, evaluated on the owner's
+    //! own regressors, e.g. the dealer cancels its hedge swap and the issuer follows by calling
+    //! the note). Both pricers must share the model, the last flow index and the notice dates;
+    //! the owner must have been trained (calculate()).
+    FmmLsmResult valueWithImportedDecisions(const FmmLsmPricer& policyOwner, const BigNatural seed) const;
+    //! paired difference on COMMON valuation paths: own-policy value minus imported-decision value
+    //! of this instrument (mean, standard error)
+    std::pair<Real, Real> pairedImportedDecisionDifference(const FmmLsmPricer& policyOwner,
+                                                           const BigNatural seed) const;
     //! Andersen-Broadie dual upper bound for the trained policy (A4 acceptance 4), nested
     //! simulation with innerPaths sub-paths at each right of each of outerPaths outer paths.
-    //! Initial scope: rights with settleIdx == noticeIdx (exercise payoff adapted at the notice
-    //! date); instruments with a notice period are rejected until the conditional-payoff
-    //! extension is built (explicitly outstanding).
+    //! Rights with a notice period (settleIdx > noticeIdx) use the adapted exercise payoff: the
+    //! conditional expectation at the notice date of the deflated exercise cash flows, i.e. the
+    //! flows between notice and settlement and the fee marked on the notice-date curve.
     FmmDualBoundResult dualBound(const Size outerPaths, const Size innerPaths, const BigNatural seed) const;
 
 private:
     //! deterministic issuer-spread discount factor anchored at time 0
     Real spreadDf(const Time T) const { return std::exp(-instrument_.issuerSpread * T); }
+    //! deflated (by `bank`) value at the state's date of the flows with grid index in (from, to],
+    //! marked on the state's curve
+    Real markDeflated(const ForwardMarketModel::State& state, const Size from, const Size to, const Real bank) const;
+    //! deflated (by `bank`) value at the state's date of right r's fee paid at its settlement
+    Real feeDeflated(const ForwardMarketModel::State& state, const Size r, const Real bank) const;
     //! regressors at a right given the state at its notice date
     Array regressorsAt(const ForwardMarketModel::State& state, const Size r, const Real bank) const;
     //! policy decision at right r for the given regressors
@@ -145,14 +180,21 @@ private:
     void simulate(const Size paths, const BigNatural seed, const SequenceType seq,
                   std::vector<PathData>& out) const;
     Array basis(const Array& x) const;
-    //! pathwise value under a policy (forward pass); optionally records the exercised right
-    Real pathValue(const PathData& p, const FmmLsmPolicy& pol, Integer* exercisedRight) const;
+    //! first right at which `pol` exercises along the path, -1 if never
+    Integer decideRight(const PathData& p, const FmmLsmPolicy& pol) const;
+    //! pathwise deflated value when exercising at right `exercisedRight` (-1 = never)
+    Real pathValueAt(const PathData& p, const Integer exercisedRight) const;
+    //! value and exercise statistics of the valuation paths given the exercised right per path
+    FmmLsmResult summarize(const std::vector<PathData>& paths, const std::vector<Integer>& exercised) const;
+    //! preconditions for common-path decision import from `policyOwner`
+    void checkCommonPaths(const FmmLsmPricer& policyOwner, const char* where) const;
 
     QuantLib::ext::shared_ptr<ForwardMarketModel> model_;
     FmmCallableInstrument instrument_;
     FmmLsmConfig config_;
     FmmLsmPolicy policy_;
     Size M_;
+    Real underlyingCurve_ = 0.0; //!< t=0 curve value of the underlying flows (Cancel), 0 for Enter
 };
 
 } // namespace QuantExt

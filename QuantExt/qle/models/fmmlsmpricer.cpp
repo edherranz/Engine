@@ -48,6 +48,15 @@ FmmLsmPricer::FmmLsmPricer(const QuantLib::ext::shared_ptr<ForwardMarketModel>& 
     QL_REQUIRE(model_, "FmmLsmPricer: model is null");
     instrument_.validate(M_);
     QL_REQUIRE(config_.basisOrder == 1 || config_.basisOrder == 2, "FmmLsmPricer: basisOrder must be 1 or 2");
+    if (instrument_.style == FmmCallableInstrument::Style::Cancel) {
+        const auto& p = *model_->parametrization();
+        for (Size j = 1; j <= instrument_.lastFlowIdx; ++j) {
+            const Real pj = p.termStructure()->discount(p.rateTime(j));
+            const Real pjm = p.termStructure()->discount(p.rateTime(j - 1));
+            underlyingCurve_ += (instrument_.fixedFlows[j] * pj + instrument_.floatWeights[j] * (pjm - pj)) *
+                                spreadDf(p.rateTime(j));
+        }
+    }
 }
 
 Array FmmLsmPricer::basis(const Array& x) const {
@@ -73,34 +82,52 @@ Array FmmLsmPricer::basis(const Array& x) const {
     return b;
 }
 
-Array FmmLsmPricer::regressorsAt(const ForwardMarketModel::State& st, const Size r, const Real bank) const {
+Real FmmLsmPricer::markDeflated(const ForwardMarketModel::State& st, const Size from, const Size to,
+                                const Real bank) const {
     const auto& p = *model_->parametrization();
-    const auto& rt = instrument_.rights[r];
-    const Size last = instrument_.lastFlowIdx;
-    // par rate to maturity, front rate, deflated current mark of the switched flows
-    Real annuity = 0.0, mark = 0.0;
-    const Real pEnd = model_->discountBond(st, p.rateTime(last));
-    for (Size j = rt.noticeIdx + 1; j <= last; ++j)
-        annuity += p.tau(j) * model_->discountBond(st, p.rateTime(j));
     const Real sdT = spreadDf(st.t);
-    for (Size j = rt.settleIdx + 1; j <= last; ++j) {
+    Real mark = 0.0;
+    for (Size j = from + 1; j <= to; ++j) {
         const Real pj = model_->discountBond(st, p.rateTime(j));
         const Real pjm = model_->discountBond(st, p.rateTime(j - 1));
         mark += (instrument_.fixedFlows[j] * pj + instrument_.floatWeights[j] * (pjm - pj)) *
                 spreadDf(p.rateTime(j)) / sdT;
     }
+    return mark / bank;
+}
+
+Real FmmLsmPricer::feeDeflated(const ForwardMarketModel::State& st, const Size r, const Real bank) const {
+    const auto& p = *model_->parametrization();
+    const auto& rt = instrument_.rights[r];
+    return rt.feeFlow * model_->discountBond(st, p.rateTime(rt.settleIdx)) * spreadDf(p.rateTime(rt.settleIdx)) /
+           spreadDf(st.t) / bank;
+}
+
+Array FmmLsmPricer::regressorsAt(const ForwardMarketModel::State& st, const Size r, const Real bank) const {
+    const auto& p = *model_->parametrization();
+    const auto& rt = instrument_.rights[r];
+    const Size last = instrument_.lastFlowIdx;
+    // par rate to maturity, front rate, deflated intrinsic exercise value (what exercising is
+    // worth over holding, marked on the current curve: Enter switched flows + fee, Cancel fee -
+    // switched flows)
+    Real annuity = 0.0;
+    const Real pEnd = model_->discountBond(st, p.rateTime(last));
+    for (Size j = rt.noticeIdx + 1; j <= last; ++j)
+        annuity += p.tau(j) * model_->discountBond(st, p.rateTime(j));
+    const Real mark = markDeflated(st, rt.settleIdx, last, bank);
+    const Real fee = feeDeflated(st, r, bank);
     Array x(3);
     x[0] = annuity > QL_EPSILON ? (1.0 - pEnd) / annuity : 0.0;
     x[1] = st.R[std::min<Size>(rt.noticeIdx + 1, M_) - 1];
-    x[2] = mark / bank;
+    x[2] = instrument_.style == FmmCallableInstrument::Style::Enter ? mark + fee : fee - mark;
     return x;
 }
 
 bool FmmLsmPricer::exerciseDecision(const Array& x, const Size r, const FmmLsmPolicy& pol) const {
     if (pol.coefficients[r].empty())
         return false;
-    if (instrument_.style == FmmCallableInstrument::Style::Enter && x[2] <= 0.0)
-        return false; // outside the trained domain
+    if (x[2] <= 0.0)
+        return false; // no intrinsic value: outside the trained (in-the-money) domain
     const Array b = basis(x);
     Real dHat = 0.0;
     for (Size k = 0; k < b.size(); ++k)
@@ -141,27 +168,27 @@ void FmmLsmPricer::simulate(const Size paths, const BigNatural seed, const Seque
             for (Size j = rt.settleIdx + 1; j <= last; ++j)
                 sw += d.deflatedFlows[j];
             d.switchedValue[r] = sw;
-            d.deflatedFee[r] = rt.feeFlow * model_->discountBond(st, p.rateTime(rt.settleIdx)) *
-                               spreadDf(p.rateTime(rt.settleIdx)) / spreadDf(st.t) / bank[rt.noticeIdx];
+            d.deflatedFee[r] = feeDeflated(st, r, bank[rt.noticeIdx]);
             d.regressors[r] = regressorsAt(st, r, bank[rt.noticeIdx]);
         }
         d.deflatedFlows[0] = total; // cache the never-exercise total in slot 0
     }
 }
 
-Real FmmLsmPricer::pathValue(const PathData& d, const FmmLsmPolicy& pol, Integer* exercisedRight) const {
+Integer FmmLsmPricer::decideRight(const PathData& d, const FmmLsmPolicy& pol) const {
+    for (Size r = 0; r < instrument_.rights.size(); ++r)
+        if (exerciseDecision(d.regressors[r], r, pol))
+            return static_cast<Integer>(r);
+    return -1;
+}
+
+Real FmmLsmPricer::pathValueAt(const PathData& d, const Integer exercisedRight) const {
     const bool enter = instrument_.style == FmmCallableInstrument::Style::Enter;
     const Real total = d.deflatedFlows[0];
-    if (exercisedRight)
-        *exercisedRight = -1;
-    for (Size r = 0; r < instrument_.rights.size(); ++r) {
-        if (exerciseDecision(d.regressors[r], r, pol)) {
-            if (exercisedRight)
-                *exercisedRight = static_cast<Integer>(r);
-            return enter ? d.switchedValue[r] + d.deflatedFee[r] : total - d.switchedValue[r] + d.deflatedFee[r];
-        }
-    }
-    return enter ? 0.0 : total;
+    if (exercisedRight < 0)
+        return enter ? 0.0 : total;
+    const Size r = static_cast<Size>(exercisedRight);
+    return enter ? d.switchedValue[r] + d.deflatedFee[r] : total - d.switchedValue[r] + d.deflatedFee[r];
 }
 
 FmmLsmResult FmmLsmPricer::calculate() {
@@ -179,9 +206,10 @@ FmmLsmResult FmmLsmPricer::calculate() {
         V[n] = enter ? 0.0 : train[n].deflatedFlows[0];
     const Size nb = basis(Array(3, 0.0)).size();
     for (Size rr = nRights; rr-- > 0;) {
+        // regress on the in-the-money paths only (positive intrinsic value), both styles
         std::vector<Size> idx;
         for (Size n = 0; n < train.size(); ++n)
-            if (!enter || train[n].regressors[rr][2] > 0.0)
+            if (train[n].regressors[rr][2] > 0.0)
                 idx.push_back(n);
         if (idx.size() < 2 * nb)
             continue; // leave as never-exercise
@@ -192,16 +220,13 @@ FmmLsmResult FmmLsmPricer::calculate() {
             const Array b = basis(d.regressors[rr]);
             for (Size k = 0; k < nb; ++k)
                 A[q][k] = b[k];
-            const Real exValue = enter ? d.switchedValue[rr] + d.deflatedFee[rr]
-                                       : d.deflatedFlows[0] - d.switchedValue[rr] + d.deflatedFee[rr];
-            y[q] = V[idx[q]] - exValue; // continuation minus exercise
+            y[q] = V[idx[q]] - pathValueAt(d, static_cast<Integer>(rr)); // continuation minus exercise
         }
         policy_.coefficients[rr] = qrSolve(A, y);
         for (const Size n : idx) {
             const PathData& d = train[n];
             if (exerciseDecision(d.regressors[rr], rr, policy_))
-                V[n] = enter ? d.switchedValue[rr] + d.deflatedFee[rr]
-                             : d.deflatedFlows[0] - d.switchedValue[rr] + d.deflatedFee[rr];
+                V[n] = pathValueAt(d, static_cast<Integer>(rr));
         }
     }
     Real trainMean = 0.0;
@@ -212,21 +237,50 @@ FmmLsmResult FmmLsmPricer::calculate() {
     // ---- independent valuation pass with the frozen policy ----
     FmmLsmResult res = valueWithPolicy(policy_, config_.valuationSeed);
     res.trainingValue = trainMean;
-
-    if (!enter) {
-        const auto& p = *model_->parametrization();
-        Real u = 0.0;
-        for (Size j = 1; j <= instrument_.lastFlowIdx; ++j) {
-            const Real pj = p.termStructure()->discount(p.rateTime(j));
-            const Real pjm = p.termStructure()->discount(p.rateTime(j - 1));
-            u += (instrument_.fixedFlows[j] * pj + instrument_.floatWeights[j] * (pjm - pj)) *
-                 spreadDf(p.rateTime(j));
-        }
-        res.underlyingValue = u;
-    }
     res.runtimeSeconds =
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count() *
         1e-3;
+    return res;
+}
+
+FmmLsmResult FmmLsmPricer::summarize(const std::vector<PathData>& val, const std::vector<Integer>& exercised) const {
+    const auto& p = *model_->parametrization();
+    const bool enter = instrument_.style == FmmCallableInstrument::Style::Enter;
+    const Size nRights = instrument_.rights.size();
+    FmmLsmResult res;
+    IncrementalStatistics stats, cvStats, totalStats, neverStats;
+    std::vector<IncrementalStatistics> exStats(nRights);
+    Real timeSum = 0.0;
+    Size timeCount = 0;
+    for (Size n = 0; n < val.size(); ++n) {
+        const Integer er = exercised[n];
+        const Real v = pathValueAt(val[n], er);
+        stats.add(v);
+        // control variate: the realized underlying total has the known mean underlyingCurve_
+        const Real total = enter ? 0.0 : val[n].deflatedFlows[0];
+        totalStats.add(total);
+        cvStats.add(v - (total - underlyingCurve_));
+        for (Size r = 0; r < nRights; ++r)
+            exStats[r].add(er == static_cast<Integer>(r) ? 1.0 : 0.0);
+        neverStats.add(er < 0 ? 1.0 : 0.0);
+        if (er >= 0) {
+            timeSum += p.rateTime(instrument_.rights[er].noticeIdx);
+            ++timeCount;
+        }
+    }
+    res.lowerBound = stats.mean();
+    res.lowerBoundSe = stats.errorEstimate();
+    res.lowerBoundCv = cvStats.mean();
+    res.lowerBoundCvSe = cvStats.errorEstimate();
+    res.underlyingValue = underlyingCurve_;
+    res.underlyingValueMc = totalStats.mean();
+    res.underlyingValueMcSe = totalStats.errorEstimate();
+    for (Size r = 0; r < nRights; ++r) {
+        res.exerciseProbability.push_back(exStats[r].mean());
+        res.exerciseProbabilitySe.push_back(exStats[r].errorEstimate());
+    }
+    res.noExerciseProbability = neverStats.mean();
+    res.expectedExerciseTime = timeCount > 0 ? timeSum / static_cast<Real>(timeCount) : 0.0;
     return res;
 }
 
@@ -238,33 +292,10 @@ FmmLsmResult FmmLsmPricer::valueWithPolicy(const FmmLsmPolicy& pol, const BigNat
     QL_REQUIRE(pol.basisOrder == config_.basisOrder, "FmmLsmPricer::valueWithPolicy: basis order mismatch");
     std::vector<PathData> val;
     simulate(config_.valuationPaths, seed, config_.valuationSequence, val);
-    FmmLsmResult res;
-    IncrementalStatistics stats;
-    std::vector<IncrementalStatistics> exStats(instrument_.rights.size());
-    IncrementalStatistics neverStats;
-    Real timeSum = 0.0;
-    Size timeCount = 0;
-    const auto& p = *model_->parametrization();
-    for (const auto& d : val) {
-        Integer er = -1;
-        stats.add(pathValue(d, pol, &er));
-        for (Size r = 0; r < instrument_.rights.size(); ++r)
-            exStats[r].add(er == static_cast<Integer>(r) ? 1.0 : 0.0);
-        neverStats.add(er < 0 ? 1.0 : 0.0);
-        if (er >= 0) {
-            timeSum += p.rateTime(instrument_.rights[er].noticeIdx);
-            ++timeCount;
-        }
-    }
-    res.lowerBound = stats.mean();
-    res.lowerBoundSe = stats.errorEstimate();
-    for (Size r = 0; r < instrument_.rights.size(); ++r) {
-        res.exerciseProbability.push_back(exStats[r].mean());
-        res.exerciseProbabilitySe.push_back(exStats[r].errorEstimate());
-    }
-    res.noExerciseProbability = neverStats.mean();
-    res.expectedExerciseTime = timeCount > 0 ? timeSum / static_cast<Real>(timeCount) : 0.0;
-    return res;
+    std::vector<Integer> ex(val.size());
+    for (Size n = 0; n < val.size(); ++n)
+        ex[n] = decideRight(val[n], pol);
+    return summarize(val, ex);
 }
 
 std::pair<Real, Real> FmmLsmPricer::pairedPolicyDifference(const FmmLsmPolicy& importedPolicy,
@@ -275,7 +306,43 @@ std::pair<Real, Real> FmmLsmPricer::pairedPolicyDifference(const FmmLsmPolicy& i
     simulate(config_.valuationPaths, seed, config_.valuationSequence, val);
     IncrementalStatistics diff;
     for (const auto& d : val)
-        diff.add(pathValue(d, policy_, nullptr) - pathValue(d, importedPolicy, nullptr));
+        diff.add(pathValueAt(d, decideRight(d, policy_)) - pathValueAt(d, decideRight(d, importedPolicy)));
+    return {diff.mean(), diff.errorEstimate()};
+}
+
+void FmmLsmPricer::checkCommonPaths(const FmmLsmPricer& owner, const char* where) const {
+    QL_REQUIRE(owner.model_ == model_, where << ": the policy owner must be priced on the same model (common paths)");
+    QL_REQUIRE(owner.instrument_.lastFlowIdx == instrument_.lastFlowIdx,
+               where << ": the policy owner's last flow index must agree (common paths)");
+    QL_REQUIRE(owner.instrument_.rights.size() == instrument_.rights.size(), where << ": rights do not align 1:1");
+    for (Size r = 0; r < instrument_.rights.size(); ++r)
+        QL_REQUIRE(owner.instrument_.rights[r].noticeIdx == instrument_.rights[r].noticeIdx,
+                   where << ": notice dates of right " << r << " differ");
+    QL_REQUIRE(owner.policy_.coefficients.size() == owner.instrument_.rights.size(),
+               where << ": the policy owner has no trained policy - call calculate() on it first");
+}
+
+FmmLsmResult FmmLsmPricer::valueWithImportedDecisions(const FmmLsmPricer& owner, const BigNatural seed) const {
+    checkCommonPaths(owner, "FmmLsmPricer::valueWithImportedDecisions");
+    std::vector<PathData> mine, theirs;
+    simulate(config_.valuationPaths, seed, config_.valuationSequence, mine);
+    owner.simulate(config_.valuationPaths, seed, config_.valuationSequence, theirs);
+    std::vector<Integer> ex(mine.size());
+    for (Size n = 0; n < mine.size(); ++n)
+        ex[n] = owner.decideRight(theirs[n], owner.policy_);
+    return summarize(mine, ex);
+}
+
+std::pair<Real, Real> FmmLsmPricer::pairedImportedDecisionDifference(const FmmLsmPricer& owner,
+                                                                     const BigNatural seed) const {
+    checkCommonPaths(owner, "FmmLsmPricer::pairedImportedDecisionDifference");
+    std::vector<PathData> mine, theirs;
+    simulate(config_.valuationPaths, seed, config_.valuationSequence, mine);
+    owner.simulate(config_.valuationPaths, seed, config_.valuationSequence, theirs);
+    IncrementalStatistics diff;
+    for (Size n = 0; n < mine.size(); ++n)
+        diff.add(pathValueAt(mine[n], decideRight(mine[n], policy_)) -
+                 pathValueAt(mine[n], owner.decideRight(theirs[n], owner.policy_)));
     return {diff.mean(), diff.errorEstimate()};
 }
 
@@ -292,7 +359,7 @@ Real FmmLsmPricer::innerPolicyValue(const ForwardMarketModel::State& start, cons
     Real switched = 0.0;       // Enter: deflated flows received after exercise
     bool exercised = false;
     Size settleIdx = 0;
-    Real feeDeflated = 0.0;
+    Real fee = 0.0;
     Size r = fromRight;
     Array z(M_ + 1);
     for (Size j = startIdx + 1; j <= last; ++j) {
@@ -311,22 +378,20 @@ Real FmmLsmPricer::innerPolicyValue(const ForwardMarketModel::State& start, cons
         }
         acc += flow;
         if (r < nRights && instrument_.rights[r].noticeIdx == j) {
-            const auto& rt = instrument_.rights[r];
             const Array x = regressorsAt(st, r, bank);
             if (exerciseDecision(x, r, pol)) {
                 exercised = true;
-                settleIdx = rt.settleIdx;
-                feeDeflated = rt.feeFlow * model_->discountBond(st, p.rateTime(rt.settleIdx)) *
-                              spreadDf(p.rateTime(rt.settleIdx)) / spreadDf(st.t) / bank;
+                settleIdx = instrument_.rights[r].settleIdx;
+                fee = feeDeflated(st, r, bank);
                 if (!enter && settleIdx == j)
-                    return acc + feeDeflated; // Cancel with immediate settlement: value is known
+                    return acc + fee; // Cancel with immediate settlement: value is known
             }
             ++r;
         }
     }
     if (!exercised)
         return enter ? 0.0 : acc;
-    return enter ? switched + feeDeflated : acc + feeDeflated;
+    return enter ? switched + fee : acc + fee;
 }
 
 FmmDualBoundResult FmmLsmPricer::dualBound(const Size outerPaths, const Size innerPaths,
@@ -334,10 +399,6 @@ FmmDualBoundResult FmmLsmPricer::dualBound(const Size outerPaths, const Size inn
     const auto start = std::chrono::steady_clock::now();
     QL_REQUIRE(policy_.coefficients.size() == instrument_.rights.size(),
                "FmmLsmPricer::dualBound: no trained policy - call calculate() first");
-    for (const auto& rt : instrument_.rights)
-        QL_REQUIRE(rt.settleIdx == rt.noticeIdx,
-                   "FmmLsmPricer::dualBound: rights with a notice period are not yet supported "
-                   "(conditional exercise payoff extension outstanding)");
     const bool enter = instrument_.style == FmmCallableInstrument::Style::Enter;
     const auto& p = *model_->parametrization();
     const Size last = instrument_.lastFlowIdx;
@@ -356,9 +417,10 @@ FmmDualBoundResult FmmLsmPricer::dualBound(const Size outerPaths, const Size inn
         std::vector<ForwardMarketModel::State> states;
         std::vector<Real> bank, prefix; // prefix[j] = sum of deflated flows up to j
         Real lower = 0.0;
+        Real cv = 0.0; // realized underlying total minus its curve value (Cancel), 0 for Enter
     };
     std::vector<Outer> outer(outerPaths);
-    IncrementalStatistics lowerStats;
+    IncrementalStatistics lowerStats, lowerCvStats;
     for (Size n = 0; n < outerPaths; ++n) {
         const auto path = gen.next();
         Outer& o = outer[n];
@@ -378,14 +440,15 @@ FmmDualBoundResult FmmLsmPricer::dualBound(const Size outerPaths, const Size inn
             const auto& rt = instrument_.rights[r];
             const auto& st = o.states[rt.noticeIdx - 1];
             if (exerciseDecision(regressorsAt(st, r, o.bank[rt.noticeIdx]), r, policy_)) {
-                const Real fee = rt.feeFlow * model_->discountBond(st, p.rateTime(rt.settleIdx)) *
-                                 spreadDf(p.rateTime(rt.settleIdx)) / spreadDf(st.t) / o.bank[rt.noticeIdx];
+                const Real fee = feeDeflated(st, r, o.bank[rt.noticeIdx]);
                 lower = enter ? (o.prefix[last] - o.prefix[rt.settleIdx]) + fee : o.prefix[rt.settleIdx] + fee;
                 break;
             }
         }
         o.lower = lower;
+        o.cv = enter ? 0.0 : o.prefix[last] - underlyingCurve_;
         lowerStats.add(lower);
+        lowerCvStats.add(lower - o.cv);
     }
     const Real lowerGlobal = lowerStats.mean();
 
@@ -393,7 +456,7 @@ FmmDualBoundResult FmmLsmPricer::dualBound(const Size outerPaths, const Size inn
     MersenneTwisterUniformRng rng(seed + 7919);
     InverseCumulativeNormal icn;
     auto normal = [&rng, &icn]() { return icn(rng.next().value); };
-    IncrementalStatistics upperStats, gapStats;
+    IncrementalStatistics upperStats, upperCvStats;
     for (Size n = 0; n < outerPaths; ++n) {
         const Outer& o = outer[n];
         Real M = 0.0, maxTerm = -QL_MAX_REAL;
@@ -404,9 +467,14 @@ FmmDualBoundResult FmmLsmPricer::dualBound(const Size outerPaths, const Size inn
             const auto& st = o.states[rt.noticeIdx - 1];
             const Real bank = o.bank[rt.noticeIdx];
             const Array x = regressorsAt(st, r, bank);
-            const Real fee = rt.feeFlow / bank;
-            // adapted exercise payoff (settle == notice): Enter uses the exact bond-based mark
-            const Real h = enter ? x[2] + fee : o.prefix[rt.noticeIdx] + fee;
+            // adapted exercise payoff: the conditional expectation at the notice date of the
+            // deflated exercise cash flows - Enter: intrinsic value (switched flows + fee marked
+            // on the notice-date curve); Cancel: realized flows to notice, plus the flows between
+            // notice and settlement and the fee marked on the notice-date curve. Realized post-
+            // notice flows would leak information and invalidate the dual bound.
+            const Real h = enter ? x[2]
+                                 : o.prefix[rt.noticeIdx] + markDeflated(st, rt.noticeIdx, rt.settleIdx, bank) +
+                                       feeDeflated(st, r, bank);
             // continuation under the policy from the next right: nested inner simulation
             if (enter && r + 1 == nRights) {
                 contHat = 0.0; // nothing left to enter
@@ -428,16 +496,24 @@ FmmDualBoundResult FmmLsmPricer::dualBound(const Size outerPaths, const Size inn
         M += hT - prevExpectation;
         maxTerm = std::max(maxTerm, hT - M);
         upperStats.add(maxTerm);
-        gapStats.add(maxTerm - o.lower);
+        upperCvStats.add(maxTerm - o.cv);
     }
 
+    // max_r (h_r - M_r) = V^_0 + regret on every outer path (V^_0 = lowerGlobal enters each term
+    // as an exact constant; the term at the policy's own exercise date telescopes to it), so the
+    // duality gap mean(maxTerm) - V^_0 carries only the regret noise, whereas the raw upper bound
+    // inherits the full small-sample noise of V^_0
     FmmDualBoundResult res;
     res.lowerBound = lowerGlobal;
     res.lowerBoundSe = lowerStats.errorEstimate();
+    res.gap = upperStats.mean() - lowerGlobal;
+    res.gapSe = upperStats.errorEstimate();
     res.upperBound = upperStats.mean();
-    res.upperBoundSe = upperStats.errorEstimate();
-    res.gap = gapStats.mean();
-    res.gapSe = gapStats.errorEstimate();
+    res.upperBoundSe = std::sqrt(res.lowerBoundSe * res.lowerBoundSe + res.gapSe * res.gapSe);
+    res.lowerBoundCv = lowerCvStats.mean();
+    res.lowerBoundCvSe = lowerCvStats.errorEstimate();
+    res.upperBoundCv = upperCvStats.mean();
+    res.upperBoundCvSe = std::sqrt(res.lowerBoundCvSe * res.lowerBoundCvSe + res.gapSe * res.gapSe);
     res.outerPaths = outerPaths;
     res.innerPaths = innerPaths;
     res.runtimeSeconds =

@@ -30,6 +30,7 @@
 #include <ql/time/calendars/nullcalendar.hpp>
 #include <ql/time/daycounters/actual365fixed.hpp>
 
+#include <qle/instruments/callablebond.hpp>
 #include <qle/models/fmmanalytics.hpp>
 #include <qle/models/fmmcalibration.hpp>
 #include <qle/models/fmmlsmpricer.hpp>
@@ -39,8 +40,10 @@
 #include <qle/models/irlgm1fpiecewiseconstantparametrization.hpp>
 #include <qle/models/lgm.hpp>
 #include <qle/pricingengines/analyticlgmswaptionengine.hpp>
+#include <qle/pricingengines/numericlgmcallablebondengine.hpp>
 #include <qle/pricingengines/numericlgmmultilegoptionengine.hpp>
 
+#include <ql/cashflows/fixedratecoupon.hpp>
 #include <ql/indexes/iborindex.hpp>
 #include <ql/instruments/makevanillaswap.hpp>
 #include <ql/instruments/swaption.hpp>
@@ -48,6 +51,8 @@
 #include <ql/models/shortrate/calibrationhelpers/swaptionhelper.hpp>
 #include <ql/pricingengines/swap/discountingswapengine.hpp>
 #include <ql/time/schedule.hpp>
+
+#include <cstdlib>
 
 using namespace QuantLib;
 using namespace QuantExt;
@@ -1254,6 +1259,46 @@ void fillPayerSwapFlows(FmmCallableInstrument& inst, const FmmParametrization& p
         inst.fixedFlows[c] = -sign * K * (p.rateTime(c) - p.rateTime(c - 4));
 }
 
+// replication-mode bed on real dates: quarterly grid to 5y on a flat 3% curve, piecewise-constant
+// LGM alpha (the setup of testLsmBermudanVsLgmGrid), FMM built as the exact replication of the LGM
+struct ReplicationBed {
+    ReplicationBed()
+        : asof(19, September, 2026), end(asof + Period(5, Years)),
+          quarterly(asof, end, Period(3, Months), NullCalendar(), Unadjusted, Unadjusted, DateGeneration::Forward,
+                    false) {
+        Settings::instance().evaluationDate() = asof;
+        curve = Handle<YieldTermStructure>(
+            QuantLib::ext::make_shared<FlatForward>(0, NullCalendar(), 0.03, Actual365Fixed()));
+        M = quarterly.size() - 1;
+        Array rateTimes(M + 1);
+        for (Size k = 0; k <= M; ++k)
+            rateTimes[k] = dc.yearFraction(asof, quarterly[k]);
+        Array alphaTimes(3);
+        alphaTimes[0] = rateTimes[4];
+        alphaTimes[1] = rateTimes[8];
+        alphaTimes[2] = rateTimes[12];
+        Array alpha(4);
+        alpha[0] = 0.0090;
+        alpha[1] = 0.0110;
+        alpha[2] = 0.0100;
+        alpha[3] = 0.0095;
+        lgmParam = QuantLib::ext::make_shared<IrLgm1fPiecewiseConstantParametrization>(EURCurrency(), curve, alphaTimes,
+                                                                                       alpha, Array(), Array(1, 0.01));
+        lgmModel = QuantLib::ext::make_shared<LinearGaussMarkovModel>(lgmParam);
+        fmmParam = QuantLib::ext::make_shared<FmmParametrization>(EURCurrency(), curve, rateTimes, lgmParam);
+        fmmModel = QuantLib::ext::make_shared<ForwardMarketModel>(fmmParam);
+    }
+    Date asof, end;
+    Schedule quarterly;
+    Actual365Fixed dc;
+    Handle<YieldTermStructure> curve;
+    Size M = 0;
+    QuantLib::ext::shared_ptr<IrLgm1fPiecewiseConstantParametrization> lgmParam;
+    QuantLib::ext::shared_ptr<LinearGaussMarkovModel> lgmModel;
+    QuantLib::ext::shared_ptr<FmmParametrization> fmmParam;
+    QuantLib::ext::shared_ptr<ForwardMarketModel> fmmModel;
+};
+
 } // namespace
 
 BOOST_AUTO_TEST_CASE(testLsmEuropeanLimit) {
@@ -1437,21 +1482,22 @@ BOOST_AUTO_TEST_CASE(testLsmDualBoundBermudan) {
     FmmLsmPricer pricer(fmmModel, inst, cfg);
     const auto lsm = pricer.calculate();
     const auto dual = pricer.dualBound(1024, 128, 20260919);
-
+    // tight upper bound = precise LSM lower bound (32k paths) + duality gap (regret-only noise)
+    const Real upper = lsm.lowerBound + dual.gap;
+    const Real upperSe = std::sqrt(lsm.lowerBoundSe * lsm.lowerBoundSe + dual.gapSe * dual.gapSe);
     BOOST_TEST_MESSAGE("DUALITY-GAP ROW | bermudan payer 5y annual-exercise (replication) | grid "
-                       << gridPrice << " | lower " << dual.lowerBound << " +/- " << dual.lowerBoundSe << " | upper "
-                       << dual.upperBound << " +/- " << dual.upperBoundSe << " | gap " << dual.gap << " +/- "
-                       << dual.gapSe << " (" << 100.0 * dual.gap / gridPrice << "% of value) | outer "
-                       << dual.outerPaths << " x inner " << dual.innerPaths << " | " << dual.runtimeSeconds
-                       << " s (lsm valuation " << lsm.lowerBound << ")");
+                       << gridPrice << " | lower(32k) " << lsm.lowerBound << " +/- " << lsm.lowerBoundSe << " | gap "
+                       << dual.gap << " +/- " << dual.gapSe << " (" << 100.0 * dual.gap / gridPrice
+                       << "% of value) | upper = lower + gap " << upper << " +/- " << upperSe << " | outer-sample "
+                       << dual.lowerBound << " +/- " << dual.lowerBoundSe << " | outer " << dual.outerPaths
+                       << " x inner " << dual.innerPaths << " | " << dual.runtimeSeconds << " s");
     // the true value (grid) must lie between the bounds within noise
-    BOOST_CHECK_MESSAGE(dual.upperBound > gridPrice - 3.0 * dual.upperBoundSe,
-                        "upper bound below grid price: " << dual.upperBound - gridPrice);
-    BOOST_CHECK_MESSAGE(dual.lowerBound < gridPrice + 3.0 * dual.lowerBoundSe,
-                        "lower bound above grid price: " << dual.lowerBound - gridPrice);
+    BOOST_CHECK_MESSAGE(upper > gridPrice - 3.0 * upperSe, "upper bound below grid price: " << upper - gridPrice);
+    BOOST_CHECK_MESSAGE(lsm.lowerBound < gridPrice + 3.0 * lsm.lowerBoundSe,
+                        "lower bound above grid price: " << lsm.lowerBound - gridPrice);
     BOOST_CHECK_MESSAGE(dual.gap > -3.0 * dual.gapSe, "negative duality gap beyond noise: " << dual.gap);
-    // a policy this good should leave a small gap (reported; loose sanity bound 5% of value)
-    BOOST_CHECK_MESSAGE(dual.gap < 0.05 * gridPrice + 3.0 * dual.gapSe,
+    // a policy this good should leave a small gap (reported; sanity bound 2% of value)
+    BOOST_CHECK_MESSAGE(dual.gap < 0.02 * gridPrice + 3.0 * dual.gapSe,
                         "duality gap unexpectedly large: " << dual.gap);
 }
 
@@ -1482,27 +1528,33 @@ BOOST_AUTO_TEST_CASE(testLsmCancellableParity) {
     const auto opt = optPricer.calculate();
 
     const Real swapPv = direct.underlyingValue; // curve value of the full payer swap
-    const Real lhs = direct.lowerBound;
+    const Real lhs = direct.lowerBoundCv;       // control variate on the known swap value
     const Real rhs = swapPv + opt.lowerBound;
-    const Real se = std::sqrt(direct.lowerBoundSe * direct.lowerBoundSe + opt.lowerBoundSe * opt.lowerBoundSe);
-    BOOST_TEST_MESSAGE("cancellable direct " << lhs << " +/- " << direct.lowerBoundSe << "; swap " << swapPv
-                                             << " + bermudan " << opt.lowerBound << " = " << rhs << "; diff "
-                                             << lhs - rhs << " vs 3 s.e. " << 3.0 * se);
+    const Real se = std::sqrt(direct.lowerBoundCvSe * direct.lowerBoundCvSe + opt.lowerBoundSe * opt.lowerBoundSe);
+    BOOST_TEST_MESSAGE("cancellable direct raw " << direct.lowerBound << " +/- " << direct.lowerBoundSe << " (underlying MC - curve "
+                                                 << direct.underlyingValueMc - swapPv << "), control-variate " << lhs
+                                                 << " +/- " << direct.lowerBoundCvSe << "; swap " << swapPv
+                                                 << " + bermudan " << opt.lowerBound << " = " << rhs << "; diff "
+                                                 << lhs - rhs << " vs 3 s.e. " << 3.0 * se);
     BOOST_CHECK_MESSAGE(std::fabs(lhs - rhs) < 3.0 * se + 2e-5, "cancellable parity violated: " << lhs - rhs);
 }
 
 namespace {
 
-// prints one duality-gap table row and checks the bound ordering
+// prints one duality-gap table row (control-variate values, which equal the raw ones for Enter
+// style) and checks the bound ordering
 void gapRow(FmmLsmPricer& pricer, const std::string& label, const Real lsmLower, const Real lsmLowerSe) {
     const auto dual = pricer.dualBound(512, 64, 20260920);
-    const Real gap = dual.upperBound - lsmLower;
-    BOOST_TEST_MESSAGE("DUALITY-GAP ROW | " << label << " | lower(32k) " << lsmLower << " +/- " << lsmLowerSe
-                                            << " | upper " << dual.upperBound << " +/- " << dual.upperBoundSe
-                                            << " | gap " << gap << " (" << 100.0 * gap / std::fabs(lsmLower)
-                                            << "% of |value|) | " << dual.runtimeSeconds << " s");
-    BOOST_CHECK_MESSAGE(gap > -3.0 * std::sqrt(dual.upperBoundSe * dual.upperBoundSe + lsmLowerSe * lsmLowerSe),
-                        label << ": upper bound below lower bound beyond noise, gap " << gap);
+    // tight upper bound = precise LSM lower bound + duality gap (regret-only noise)
+    const Real upper = lsmLower + dual.gap;
+    const Real upperSe = std::sqrt(lsmLowerSe * lsmLowerSe + dual.gapSe * dual.gapSe);
+    BOOST_TEST_MESSAGE("DUALITY-GAP ROW | " << label << " | lower(32k, cv) " << lsmLower << " +/- " << lsmLowerSe
+                                            << " | gap " << dual.gap << " +/- " << dual.gapSe << " ("
+                                            << 100.0 * dual.gap / std::fabs(lsmLower)
+                                            << "% of |value|) | upper = lower + gap " << upper << " +/- " << upperSe
+                                            << " | outer-sample (cv) " << dual.lowerBoundCv << " +/- "
+                                            << dual.lowerBoundCvSe << " | " << dual.runtimeSeconds << " s");
+    BOOST_CHECK_MESSAGE(dual.gap > -3.0 * dual.gapSe, label << ": negative duality gap beyond noise, " << dual.gap);
 }
 
 } // namespace
@@ -1544,15 +1596,19 @@ BOOST_AUTO_TEST_CASE(testLsmCallableBondIdentity) {
     FmmLsmPricer optPricer(bed.model, recv, cfgB);
     const auto optRes = optPricer.calculate();
 
-    const Real lhs = bondRes.lowerBound;
+    const Real lhs = bondRes.lowerBoundCv; // control variate on the known straight-bond value
     const Real rhs = bondRes.underlyingValue + optRes.lowerBound;
-    const Real se = std::sqrt(bondRes.lowerBoundSe * bondRes.lowerBoundSe + optRes.lowerBoundSe * optRes.lowerBoundSe);
-    BOOST_TEST_MESSAGE("callable bond (issuer) " << lhs << " +/- " << bondRes.lowerBoundSe << "; straight bond "
-                                                  << bondRes.underlyingValue << " + bermudan receiver "
-                                                  << optRes.lowerBound << " = " << rhs << "; diff " << lhs - rhs
-                                                  << " vs 3 s.e. " << 3.0 * se);
+    const Real se =
+        std::sqrt(bondRes.lowerBoundCvSe * bondRes.lowerBoundCvSe + optRes.lowerBoundSe * optRes.lowerBoundSe);
+    BOOST_TEST_MESSAGE("callable bond (issuer) raw " << bondRes.lowerBound << " +/- " << bondRes.lowerBoundSe
+                                                      << " (underlying MC - curve "
+                                                      << bondRes.underlyingValueMc - bondRes.underlyingValue
+                                                      << "), control-variate " << lhs << " +/- " << bondRes.lowerBoundCvSe
+                                                      << "; straight bond " << bondRes.underlyingValue
+                                                      << " + bermudan receiver " << optRes.lowerBound << " = " << rhs
+                                                      << "; diff " << lhs - rhs << " vs 3 s.e. " << 3.0 * se);
     BOOST_CHECK_MESSAGE(std::fabs(lhs - rhs) < 3.0 * se + 2e-5, "callable bond identity violated: " << lhs - rhs);
-    gapRow(bondPricer, "callable fixed bond 5y annual par calls (issuer)", bondRes.lowerBound, bondRes.lowerBoundSe);
+    gapRow(bondPricer, "callable fixed bond 5y annual par calls (issuer)", bondRes.lowerBoundCv, bondRes.lowerBoundCvSe);
 
     // issuer spread 50 bp: liability PV magnitude shrinks (value less negative), option changes
     FmmCallableInstrument bondSpread = bond;
@@ -1607,19 +1663,22 @@ BOOST_AUTO_TEST_CASE(testLsmAccretingNoteAndSwap) {
     FmmLsmPricer optPricer(bed.model, opt, cfgB);
     const auto optRes = optPricer.calculate();
 
-    const Real lhs = noteRes.lowerBound;
+    const Real lhs = noteRes.lowerBoundCv; // control variate on the known zero-liability value
     const Real rhs = noteRes.underlyingValue + optRes.lowerBound;
-    const Real se = std::sqrt(noteRes.lowerBoundSe * noteRes.lowerBoundSe + optRes.lowerBoundSe * optRes.lowerBoundSe);
-    BOOST_TEST_MESSAGE("accreting callable note " << lhs << "; zero liability " << noteRes.underlyingValue
-                                                  << " + bermudan zero-bond option " << optRes.lowerBound << " = "
-                                                  << rhs << "; diff " << lhs - rhs << " vs 3 s.e. " << 3.0 * se);
+    const Real se =
+        std::sqrt(noteRes.lowerBoundCvSe * noteRes.lowerBoundCvSe + optRes.lowerBoundSe * optRes.lowerBoundSe);
+    BOOST_TEST_MESSAGE("accreting callable note raw " << noteRes.lowerBound << " +/- " << noteRes.lowerBoundSe
+                                                      << ", control-variate " << lhs << " +/- " << noteRes.lowerBoundCvSe
+                                                      << "; zero liability " << noteRes.underlyingValue
+                                                      << " + bermudan zero-bond option " << optRes.lowerBound << " = "
+                                                      << rhs << "; diff " << lhs - rhs << " vs 3 s.e. " << 3.0 * se);
     BOOST_CHECK_MESSAGE(std::fabs(lhs - rhs) < 3.0 * se + 2e-5, "accreting note identity violated: " << lhs - rhs);
     std::ostringstream probs;
     for (Size r = 0; r < noteRes.exerciseProbability.size(); ++r)
         probs << " " << noteRes.exerciseProbability[r];
     BOOST_TEST_MESSAGE("accreting note call probabilities (2y,3y,4y):" << probs.str() << "; never "
                                                                        << noteRes.noExerciseProbability);
-    gapRow(notePricer, "callable accreting zero note 5yNC2 (issuer)", noteRes.lowerBound, noteRes.lowerBoundSe);
+    gapRow(notePricer, "callable accreting zero note 5yNC2 (issuer)", noteRes.lowerBoundCv, noteRes.lowerBoundCvSe);
 
     // matching accreting cancellable swap: notional accretes, fixed coupon accRate on the
     // accreted notional, float on the accreted notional; cancel rights as the note's calls
@@ -1645,14 +1704,16 @@ BOOST_AUTO_TEST_CASE(testLsmAccretingNoteAndSwap) {
     }
     FmmLsmPricer accRecvPricer(bed.model, accRecv, cfgB);
     const auto accRecvRes = accRecvPricer.calculate();
-    const Real diffAcc = accSwapRes.lowerBound - (accSwapRes.underlyingValue + accRecvRes.lowerBound);
-    const Real seAcc = std::sqrt(accSwapRes.lowerBoundSe * accSwapRes.lowerBoundSe +
+    const Real diffAcc = accSwapRes.lowerBoundCv - (accSwapRes.underlyingValue + accRecvRes.lowerBound);
+    const Real seAcc = std::sqrt(accSwapRes.lowerBoundCvSe * accSwapRes.lowerBoundCvSe +
                                  accRecvRes.lowerBoundSe * accRecvRes.lowerBoundSe);
-    BOOST_TEST_MESSAGE("accreting cancellable swap " << accSwapRes.lowerBound << " vs swap+option "
-                                                     << accSwapRes.underlyingValue + accRecvRes.lowerBound
-                                                     << "; diff " << diffAcc << " vs 3 s.e. " << 3.0 * seAcc);
+    BOOST_TEST_MESSAGE("accreting cancellable swap raw " << accSwapRes.lowerBound << " +/- " << accSwapRes.lowerBoundSe
+                                                         << ", control-variate " << accSwapRes.lowerBoundCv << " +/- "
+                                                         << accSwapRes.lowerBoundCvSe << " vs swap+option "
+                                                         << accSwapRes.underlyingValue + accRecvRes.lowerBound
+                                                         << "; diff " << diffAcc << " vs 3 s.e. " << 3.0 * seAcc);
     BOOST_CHECK_MESSAGE(std::fabs(diffAcc) < 3.0 * seAcc + 2e-5, "accreting swap parity violated: " << diffAcc);
-    gapRow(accSwapPricer, "accreting cancellable swap 5yNC2", accSwapRes.lowerBound, accSwapRes.lowerBoundSe);
+    gapRow(accSwapPricer, "accreting cancellable swap 5yNC2", accSwapRes.lowerBoundCv, accSwapRes.lowerBoundCvSe);
 }
 
 BOOST_AUTO_TEST_CASE(testLsmStepUpNote) {
@@ -1697,25 +1758,32 @@ BOOST_AUTO_TEST_CASE(testLsmStepUpNote) {
     FmmLsmPricer optPricer(bed.model, recv, cfgB);
     const auto optRes = optPricer.calculate();
 
-    const Real lhs = noteRes.lowerBound;
+    const Real lhs = noteRes.lowerBoundCv; // control variate on the known straight-note value
     const Real rhs = noteRes.underlyingValue + optRes.lowerBound;
-    const Real se = std::sqrt(noteRes.lowerBoundSe * noteRes.lowerBoundSe + optRes.lowerBoundSe * optRes.lowerBoundSe);
-    BOOST_TEST_MESSAGE("step-up callable note " << lhs << "; straight " << noteRes.underlyingValue
-                                                << " + bermudan receiver " << optRes.lowerBound << " = " << rhs
-                                                << "; diff " << lhs - rhs << " vs 3 s.e. " << 3.0 * se);
+    const Real se =
+        std::sqrt(noteRes.lowerBoundCvSe * noteRes.lowerBoundCvSe + optRes.lowerBoundSe * optRes.lowerBoundSe);
+    BOOST_TEST_MESSAGE("step-up callable note raw " << noteRes.lowerBound << " +/- " << noteRes.lowerBoundSe
+                                                    << " (underlying MC - curve "
+                                                    << noteRes.underlyingValueMc - noteRes.underlyingValue
+                                                    << "), control-variate " << lhs << " +/- " << noteRes.lowerBoundCvSe
+                                                    << "; straight " << noteRes.underlyingValue << " + bermudan receiver "
+                                                    << optRes.lowerBound << " = " << rhs << "; diff " << lhs - rhs
+                                                    << " vs 3 s.e. " << 3.0 * se);
     BOOST_CHECK_MESSAGE(std::fabs(lhs - rhs) < 3.0 * se + 2e-5, "step-up note identity violated: " << lhs - rhs);
-    gapRow(notePricer, "callable step-up note 5y annual par calls (issuer)", noteRes.lowerBound, noteRes.lowerBoundSe);
+    gapRow(notePricer, "callable step-up note 5y annual par calls (issuer)", noteRes.lowerBoundCv, noteRes.lowerBoundCvSe);
 }
 
 BOOST_AUTO_TEST_CASE(testExerciseTransferConfigurable) {
-    BOOST_TEST_MESSAGE("A4 product 6 (owner-specified design): configurable imported-policy "
+    BOOST_TEST_MESSAGE("A4 product 6 (owner-specified design): configurable imported-decision "
                        "scenario - issuer-optimal note call vs the dealer's frozen swap-"
-                       "cancellation policy applied to the note; notice != settle, call fee "
-                       "enforced; paired CI on common valuation paths...");
+                       "cancellation decisions applied to the note; notice != settle, call fee "
+                       "enforced; paired CI on common valuation paths; hedge-configuration sweep; "
+                       "notice-period dual bound...");
     // VALUATION PERSPECTIVE: the ISSUER of a callable fixed-rate note (all flows signed from the
     // issuer, i.e. negative coupons/principal); a POSITIVE mismatch below is value the issuer
-    // LOSES by following the imported (dealer) policy instead of the note-optimal one.
+    // LOSES by following the imported (dealer) decisions instead of the note-optimal policy.
     FmmTestBed bed(FmmParametrization::LocalVolType::DisplacedDiffusion, 0.0025, -1.0, 3);
+    const auto& p = *bed.parametrization;
     const Real coupon = 0.032;
     const std::vector<FmmCallableInstrument::Right> noteRights = {
         {8, 9, -1.0}, {12, 13, -1.0}, {16, 17, -1.0}}; // notice 1 quarter before settlement; call at par
@@ -1726,54 +1794,182 @@ BOOST_AUTO_TEST_CASE(testExerciseTransferConfigurable) {
     note.fixedFlows.assign(21, 0.0);
     note.floatWeights.assign(21, 0.0);
     for (Size c = 4; c <= 20; c += 4)
-        note.fixedFlows[c] -= coupon * (bed.parametrization->rateTime(c) - bed.parametrization->rateTime(c - 4));
+        note.fixedFlows[c] -= coupon * (p.rateTime(c) - p.rateTime(c - 4));
     note.fixedFlows[20] -= 1.0; // principal
     note.rights = noteRights;
 
-    // the dealer's mirror cancellable swap in the aligned hedge pairing: the dealer PAYS the
-    // fixed coupon and receives float (the issuer's note-to-floating hedge), holding the
-    // cancellation right; its cancel trigger (rates falling) aligns with the note call. This is
-    // one CONFIGURATION of the imported-policy scenario, not a claim of universal practice —
-    // the opposite-signed mirror produces a large adversarial mismatch instead.
-    FmmCallableInstrument dealerSwap;
-    dealerSwap.style = FmmCallableInstrument::Style::Cancel;
-    fillPayerSwapFlows(dealerSwap, *bed.parametrization, 0, 20, coupon, 1.0); // pay fixed, receive float
-    dealerSwap.rights = {{8, 9, 0.0}, {12, 13, 0.0}, {16, 17, 0.0}};
-
     FmmLsmPricer notePricer(bed.model, note);
     const auto noteOwn = notePricer.calculate();
-    FmmLsmConfig cfgD;
-    cfgD.trainingSeed = 91;
-    FmmLsmPricer dealerPricer(bed.model, dealerSwap, cfgD);
-    dealerPricer.calculate();
-
-    const auto noteImported = notePricer.valueWithPolicy(dealerPricer.policy(), 555555);
-    const auto paired = notePricer.pairedPolicyDifference(dealerPricer.policy(), 666666);
-    std::ostringstream ownProb, impProb;
+    std::ostringstream ownProb;
     for (Size r = 0; r < noteOwn.exerciseProbability.size(); ++r)
         ownProb << " " << noteOwn.exerciseProbability[r];
-    for (Size r = 0; r < noteImported.exerciseProbability.size(); ++r)
-        impProb << " " << noteImported.exerciseProbability[r];
-    BOOST_TEST_MESSAGE("note own-policy exercise probs:" << ownProb.str() << " (never " << noteOwn.noExerciseProbability
-                                                         << ")");
-    BOOST_TEST_MESSAGE("dealer imported-policy exercise probs on note:" << impProb.str() << " (never "
-                                                                        << noteImported.noExerciseProbability << ")");
     BOOST_TEST_MESSAGE("note own-policy " << noteOwn.lowerBound << " +/- " << noteOwn.lowerBoundSe
-                                          << "; imported-policy " << noteImported.lowerBound << " +/- "
-                                          << noteImported.lowerBoundSe);
-    // the two policies must produce genuinely different exercise behaviour, else the scenario is
-    // vacuous (guards against a degenerate imported policy)
-    Real probGap = std::fabs(noteOwn.noExerciseProbability - noteImported.noExerciseProbability);
-    for (Size r = 0; r < noteOwn.exerciseProbability.size(); ++r)
-        probGap = std::max(probGap, std::fabs(noteOwn.exerciseProbability[r] - noteImported.exerciseProbability[r]));
-    BOOST_CHECK_MESSAGE(probGap > 0.01, "imported policy indistinguishable from own policy (gap " << probGap << ")");
-    BOOST_TEST_MESSAGE("exercise-mismatch value (own - imported, paired on common paths): " << paired.first
-                                                                                            << " +/- "
-                                                                                            << paired.second);
-    // own-optimal must not be worse than the imported policy beyond estimation noise
-    BOOST_CHECK_MESSAGE(paired.first > -3.0 * paired.second - 2e-5,
-                        "own policy worse than imported beyond noise: " << paired.first);
+                                          << "; exercise probs:" << ownProb.str() << " (never "
+                                          << noteOwn.noExerciseProbability << ")");
+
+    // notice-period dual bound: rights with settle > notice use the adapted (notice-date
+    // conditional expectation) exercise payoff
+    {
+        const auto dual = notePricer.dualBound(512, 64, 20260921);
+        const Real upper = noteOwn.lowerBoundCv + dual.gap;
+        const Real upperSe = std::sqrt(noteOwn.lowerBoundCvSe * noteOwn.lowerBoundCvSe + dual.gapSe * dual.gapSe);
+        BOOST_TEST_MESSAGE("DUALITY-GAP ROW | callable note 5yNC2, 1q notice period (issuer) | lower(16k, cv) "
+                           << noteOwn.lowerBoundCv << " +/- " << noteOwn.lowerBoundCvSe << " | gap " << dual.gap
+                           << " +/- " << dual.gapSe << " | upper = lower + gap " << upper << " +/- " << upperSe
+                           << " | " << dual.runtimeSeconds << " s");
+        BOOST_CHECK_MESSAGE(dual.gap > -3.0 * dual.gapSe,
+                            "notice-period: negative duality gap beyond noise: " << dual.gap);
+        BOOST_CHECK_MESSAGE(dual.gap < 0.005 + 3.0 * dual.gapSe,
+                            "notice-period duality gap unexpectedly large: " << dual.gap);
+    }
+
+    // the dealer's mirror cancellable swap in several hedge CONFIGURATIONS: aligned pairing (the
+    // dealer PAYS fixed and receives float - the issuer's note-to-floating hedge - so its
+    // cancellation trigger, rates falling, aligns with the note call) at the note coupon and at
+    // +/- 50 bp, and the opposite pairing (the dealer receives fixed). The dealer decides on its
+    // OWN swap; the issuer follows those decisions on the note. Each row is one configuration of
+    // the scenario, none is a claim of universal practice.
+    struct Config {
+        std::string label;
+        Real fixedRate;
+        Real sign;
+    };
+    const std::vector<Config> configs = {{"aligned, dealer pays fixed = coupon", coupon, 1.0},
+                                         {"aligned, dealer pays fixed = coupon - 50bp", coupon - 0.005, 1.0},
+                                         {"aligned, dealer pays fixed = coupon + 50bp", coupon + 0.005, 1.0},
+                                         {"opposite, dealer receives fixed = coupon", coupon, -1.0}};
+    Size cfgNo = 0;
+    for (const auto& c : configs) {
+        FmmCallableInstrument dealerSwap;
+        dealerSwap.style = FmmCallableInstrument::Style::Cancel;
+        fillPayerSwapFlows(dealerSwap, p, 0, 20, c.fixedRate, c.sign);
+        dealerSwap.rights = {{8, 9, 0.0}, {12, 13, 0.0}, {16, 17, 0.0}};
+        FmmLsmConfig cfgD;
+        cfgD.trainingSeed = static_cast<BigNatural>(91 + cfgNo++);
+        FmmLsmPricer dealerPricer(bed.model, dealerSwap, cfgD);
+        const auto dealerRes = dealerPricer.calculate();
+        const auto noteImported = notePricer.valueWithImportedDecisions(dealerPricer, 555555);
+        const auto paired = notePricer.pairedImportedDecisionDifference(dealerPricer, 666666);
+        std::ostringstream dProb, impProb;
+        for (Size r = 0; r < dealerRes.exerciseProbability.size(); ++r)
+            dProb << " " << dealerRes.exerciseProbability[r];
+        for (Size r = 0; r < noteImported.exerciseProbability.size(); ++r)
+            impProb << " " << noteImported.exerciseProbability[r];
+        BOOST_TEST_MESSAGE("EXERCISE-TRANSFER ROW | " << c.label << " | dealer cancel probs:" << dProb.str()
+                                                      << " (never " << dealerRes.noExerciseProbability
+                                                      << ") | note under imported decisions " << noteImported.lowerBound
+                                                      << " +/- " << noteImported.lowerBoundSe << " (probs:" << impProb.str()
+                                                      << ") | mismatch own - imported (paired) " << paired.first
+                                                      << " +/- " << paired.second);
+        // own-optimal must not be worse than the imported decisions beyond estimation noise
+        BOOST_CHECK_MESSAGE(paired.first > -3.0 * paired.second - 2e-5,
+                            c.label << ": own policy worse than imported beyond noise: " << paired.first);
+        if (cfgNo == 2) {
+            // the off-strike configuration must produce genuinely different exercise behaviour,
+            // else the scenario is vacuous (guards against a degenerate imported policy); at the
+            // note's own strike the dealer holds the same option and decides almost identically
+            Real probGap = std::fabs(noteOwn.noExerciseProbability - noteImported.noExerciseProbability);
+            for (Size r = 0; r < noteOwn.exerciseProbability.size(); ++r)
+                probGap = std::max(probGap,
+                                   std::fabs(noteOwn.exerciseProbability[r] - noteImported.exerciseProbability[r]));
+            BOOST_CHECK_MESSAGE(probGap > 0.01,
+                                "imported decisions indistinguishable from own policy (gap " << probGap << ")");
+        }
+        if (c.sign < 0.0) {
+            // opposite pairing: the dealer's cancellation is in the money when rates RISE, the
+            // opposite of the note call; following it must cost the issuer significantly
+            BOOST_CHECK_MESSAGE(paired.first > 3.0 * paired.second,
+                                "opposite configuration should show a significant positive mismatch: "
+                                    << paired.first);
+        }
+    }
     // joint package optimization is intentionally NOT performed here (kept distinct per owner)
+}
+
+BOOST_AUTO_TEST_CASE(testLsmCallableBondVsOreLgmEngine) {
+    BOOST_TEST_MESSAGE("A4 outstanding item 3: callable fixed-rate bond - FMM (replication mode) LSM "
+                       "and AB dual estimates vs ORE's NumericLgmCallableBondEngine on the same LGM...");
+    ReplicationBed rb;
+    const auto& p = *rb.fmmParam;
+    const Real coupon = 0.031;
+
+    // ORE side (holder's perspective): annual Act/365F coupons, par redemption added by the Bond
+    // base class, issuer calls at par on the 1y..4y coupon dates. In the ORE engine a coupon paid
+    // on a call date is settled before the call and the accrual on a coupon date is zero, so a
+    // dirty call price of 1.0 is exactly the FMM structure below (coupon at settle kept, fee -1).
+    const Schedule annual(rb.asof, rb.end, Period(1, Years), NullCalendar(), Unadjusted, Unadjusted,
+                          DateGeneration::Forward, false);
+    const Leg coupons = FixedRateLeg(annual).withNotionals(1.0).withCouponRates(coupon, rb.dc);
+    std::vector<CallableBond::CallabilityData> calls;
+    for (Size y = 1; y <= 4; ++y)
+        calls.push_back({annual[y], CallableBond::CallabilityData::ExerciseType::OnThisDate, 1.0,
+                         CallableBond::CallabilityData::PriceType::Dirty, true});
+    auto oreBond = QuantLib::ext::make_shared<CallableBond>(0, NullCalendar(), rb.asof, coupons, calls);
+    // FD-solver engine: its time grid has points before the first coupon date. The convolution-
+    // solver engine (timeStepsPerYear 0, event-date grid only) adds a coupon to the underlying only
+    // at a grid time strictly before its accrual end, so with no grid point between today and the
+    // first event it omits the coupon paying on the first event date - reproduced below for the
+    // record (upstream observation, not used for the comparison).
+    oreBond->setPricingEngine(QuantLib::ext::make_shared<NumericLgmCallableBondEngine>(
+        Handle<LGM>(rb.lgmModel), 50.0, FdmSchemeDesc::Douglas(), 256, 48, 1e-4, 24, rb.curve));
+    const Real oreNpv = oreBond->NPV();
+    const Real oreStraight = oreBond->result<Real>("strippedBondNpv");
+    const Real oreOption = oreBond->result<Real>("callPutValue");
+    BOOST_TEST_MESSAGE("ORE NumericLgmCallableBondEngine (FD 256 x 48/y): callable bond (holder) "
+                       << oreNpv << ", straight bond " << oreStraight << ", embedded call value " << oreOption);
+    {
+        auto conv = QuantLib::ext::make_shared<CallableBond>(0, NullCalendar(), rb.asof, coupons, calls);
+        conv->setPricingEngine(QuantLib::ext::make_shared<NumericLgmCallableBondEngine>(
+            Handle<LGM>(rb.lgmModel), 7.0, 100, 7.0, 100, 24, rb.curve));
+        const Real convStraight = conv->result<Real>("strippedBondNpv");
+        const Real firstCouponPv = coupons.front()->amount() * rb.curve->discount(coupons.front()->date());
+        BOOST_TEST_MESSAGE("ORE convolution-solver engine (event-date grid): straight bond "
+                           << convStraight << ", short of the FD value by " << oreStraight - convStraight
+                           << " = discounted first coupon " << firstCouponPv << " (upstream observation); call value "
+                           << conv->result<Real>("callPutValue"));
+    }
+
+    // FMM side (issuer's perspective, flows negative): same coupons, par call fee at the call date
+    FmmCallableInstrument bond;
+    bond.style = FmmCallableInstrument::Style::Cancel;
+    bond.lastFlowIdx = rb.M;
+    bond.fixedFlows.assign(rb.M + 1, 0.0);
+    bond.floatWeights.assign(rb.M + 1, 0.0);
+    for (Size c = 4; c <= rb.M; c += 4)
+        bond.fixedFlows[c] -= coupon * (p.rateTime(c) - p.rateTime(c - 4));
+    bond.fixedFlows[rb.M] -= 1.0;
+    for (const Size a : {4, 8, 12, 16})
+        bond.rights.push_back({a, a, -1.0});
+    FmmLsmConfig cfg;
+    cfg.trainingPaths = 32768;
+    cfg.valuationPaths = 32768;
+    FmmLsmPricer pricer(rb.fmmModel, bond, cfg);
+    const auto lsm = pricer.calculate();
+    const auto dual = pricer.dualBound(1024, 128, 20260923);
+    // control-variate values (the straight bond is known exactly); embedded call value from the
+    // issuer's side: LSM = lower estimate of the option, LSM + duality gap = upper estimate
+    const Real fmmOptionLsm = lsm.lowerBoundCv - lsm.underlyingValue;
+    const Real fmmOptionDual = fmmOptionLsm + dual.gap;
+    const Real dualSe = std::sqrt(lsm.lowerBoundCvSe * lsm.lowerBoundCvSe + dual.gapSe * dual.gapSe);
+    BOOST_TEST_MESSAGE("FMM replication: straight bond (curve) "
+                       << -lsm.underlyingValue << "; callable bond (holder) from LSM " << -lsm.lowerBoundCv << " +/- "
+                       << lsm.lowerBoundCvSe << " (raw " << -lsm.lowerBound << " +/- " << lsm.lowerBoundSe
+                       << "); embedded call: LSM " << fmmOptionLsm << " +/- " << lsm.lowerBoundCvSe << ", + gap "
+                       << dual.gap << " +/- " << dual.gapSe << " = " << fmmOptionDual << " vs ORE " << oreOption
+                       << ": LSM diff " << fmmOptionLsm - oreOption << " ("
+                       << 100.0 * (fmmOptionLsm - oreOption) / oreOption << "% of the call value), upper diff "
+                       << fmmOptionDual - oreOption << "; " << lsm.runtimeSeconds + dual.runtimeSeconds << " s");
+    BOOST_CHECK_MESSAGE(std::fabs(-lsm.underlyingValue - oreStraight) < 5e-5,
+                        "straight bond mismatch: " << -lsm.underlyingValue - oreStraight);
+    // ORE's value must lie between the FMM estimates within noise
+    BOOST_CHECK_MESSAGE(oreOption > fmmOptionLsm - 3.0 * lsm.lowerBoundCvSe,
+                        "ORE call value below the FMM LSM (lower) estimate: " << oreOption - fmmOptionLsm);
+    BOOST_CHECK_MESSAGE(oreOption < fmmOptionDual + 3.0 * dualSe,
+                        "ORE call value above the FMM dual (upper) estimate: " << oreOption - fmmOptionDual);
+    // closeness of the LSM estimate: max(3 s.e., 1.5% of the embedded call value)
+    const Real bound = std::max(3.0 * lsm.lowerBoundCvSe, 0.015 * oreOption);
+    BOOST_CHECK_MESSAGE(std::fabs(fmmOptionLsm - oreOption) < bound,
+                        "FMM LSM vs ORE grid: " << fmmOptionLsm - oreOption << " outside " << bound);
 }
 
 BOOST_AUTO_TEST_CASE(testMultiFactorVsLgmCalibratedBasket) {
@@ -1811,7 +2007,7 @@ BOOST_AUTO_TEST_CASE(testMultiFactorVsLgmCalibratedBasket) {
     std::vector<QuantLib::ext::shared_ptr<BlackCalibrationHelper>> helpers;
     for (const auto& b : basket) {
         auto h = QuantLib::ext::make_shared<SwaptionHelper>(
-            Period(b.first / 4, Years), Period(5 - b.first / 4, Years),
+            Period(static_cast<Integer>(b.first / 4), Years), Period(static_cast<Integer>(5 - b.first / 4), Years),
             Handle<Quote>(QuantLib::ext::make_shared<SimpleQuote>(b.second)), index, Period(1, Years), dc, dc,
             curve, BlackCalibrationHelper::RelativePriceError, Null<Real>(), 1.0, Normal, 0.0);
         h->setPricingEngine(lgmEngine);
@@ -1912,8 +2108,10 @@ BOOST_AUTO_TEST_CASE(testMultiFactorVsLgmCalibratedBasket) {
 
     BOOST_TEST_MESSAGE("CHALLENGER ROW | bermudan payer 5y annual, shared coterminal basket | LGM grid "
                        << lgmBermudan << " | FMM-replication LSM " << rep.lowerBound << " +/- " << rep.lowerBoundSe
-                       << " | FMM-3F LSM lower " << mf.lowerBound << " +/- " << mf.lowerBoundSe << ", AB upper "
-                       << dual3f.upperBound << " +/- " << dual3f.upperBoundSe);
+                       << " | FMM-3F LSM lower " << mf.lowerBound << " +/- " << mf.lowerBoundSe << ", duality gap "
+                       << dual3f.gap << " +/- " << dual3f.gapSe << ", upper = lower + gap "
+                       << mf.lowerBound + dual3f.gap << " +/- "
+                       << std::sqrt(mf.lowerBoundSe * mf.lowerBoundSe + dual3f.gapSe * dual3f.gapSe));
     BOOST_TEST_MESSAGE("3F minus LGM: " << mf.lowerBound - lgmBermudan << " (" << 100.0 * (mf.lowerBound - lgmBermudan) / lgmBermudan
                                         << "% of value); exercise probs 3F:" << mf.exerciseProbability[0] << " "
                                         << mf.exerciseProbability[1] << " " << mf.exerciseProbability[2] << " "
@@ -1929,6 +2127,89 @@ BOOST_AUTO_TEST_CASE(testMultiFactorVsLgmCalibratedBasket) {
                         "replication anchor off the LGM grid: " << rep.lowerBound - lgmBermudan);
     // no assertion on the 3F difference: it is a reported finding by design (do not tune away)
     BOOST_CHECK(dual3f.upperBound > mf.lowerBound - 3.0 * (dual3f.upperBoundSe + mf.lowerBoundSe));
+}
+
+BOOST_AUTO_TEST_CASE(testLsmDualBoundProductionBudget) {
+    // minutes-long: opt in with FMM_LONG_TESTS=1; produces the production-budget rows of the
+    // duality-gap table (inner-path convergence at fixed outer budget)
+    if (std::getenv("FMM_LONG_TESTS") == nullptr) {
+        BOOST_TEST_MESSAGE("A4 duality-gap table, production budget: SKIPPED (set FMM_LONG_TESTS=1 to run)");
+        BOOST_CHECK(true);
+        return;
+    }
+    BOOST_TEST_MESSAGE("A4 duality-gap table, production inner-path budget...");
+    ReplicationBed rb;
+    const auto& p = *rb.fmmParam;
+    const std::vector<std::pair<Size, Size>> budgets = {{2048, 256}, {2048, 1024}};
+    auto rows = [&](FmmLsmPricer& pricer, const std::string& label, const Real lsmLower, const Real lsmLowerSe,
+                    const Real truth) {
+        for (const auto& b : budgets) {
+            const auto dual = pricer.dualBound(b.first, b.second, 20260922);
+            const Real upper = lsmLower + dual.gap;
+            const Real upperSe = std::sqrt(lsmLowerSe * lsmLowerSe + dual.gapSe * dual.gapSe);
+            BOOST_TEST_MESSAGE("DUALITY-GAP ROW (production) | "
+                               << label << " | lower(32k, cv) " << lsmLower << " +/- " << lsmLowerSe << " | gap "
+                               << dual.gap << " +/- " << dual.gapSe << " | upper = lower + gap " << upper << " +/- "
+                               << upperSe << " | truth " << (truth != Null<Real>() ? std::to_string(truth) : "n/a")
+                               << " | outer " << b.first << " x inner " << b.second << " | " << dual.runtimeSeconds
+                               << " s");
+            BOOST_CHECK_MESSAGE(dual.gap > -3.0 * dual.gapSe,
+                                label << ": negative duality gap beyond noise: " << dual.gap);
+            if (truth != Null<Real>())
+                BOOST_CHECK_MESSAGE(upper > truth - 3.0 * upperSe,
+                                    label << ": upper bound below the reference value: " << upper - truth);
+        }
+    };
+
+    // (a) replication-mode Bermudan payer, LGM grid price as truth
+    auto index = QuantLib::ext::make_shared<IborIndex>("FMMTEST", Period(3, Months), 0, EURCurrency(), NullCalendar(),
+                                                       Unadjusted, false, rb.dc, rb.curve);
+    const Schedule fixedSched(rb.asof, rb.end, Period(1, Years), NullCalendar(), Unadjusted, Unadjusted,
+                              DateGeneration::Forward, false);
+    const Schedule floatSched(rb.asof, rb.end, Period(3, Months), NullCalendar(), Unadjusted, Unadjusted,
+                              DateGeneration::Forward, false);
+    VanillaSwap probe(VanillaSwap::Payer, 1.0, fixedSched, 0.03, rb.dc, floatSched, index, 0.0, rb.dc);
+    probe.setPricingEngine(QuantLib::ext::make_shared<DiscountingSwapEngine>(rb.curve));
+    const Real K = probe.fairRate();
+    std::vector<Date> exDates = {rb.quarterly[4], rb.quarterly[8], rb.quarterly[12], rb.quarterly[16]};
+    auto underlying = QuantLib::ext::make_shared<VanillaSwap>(VanillaSwap::Payer, 1.0, fixedSched, K, rb.dc,
+                                                              floatSched, index, 0.0, rb.dc);
+    auto swaption =
+        QuantLib::ext::make_shared<Swaption>(underlying, QuantLib::ext::make_shared<BermudanExercise>(exDates));
+    swaption->setPricingEngine(QuantLib::ext::make_shared<NumericLgmSwaptionEngine>(
+        Handle<LinearGaussMarkovModel>(rb.lgmModel), 7.0, 100, 7.0, 100, rb.curve));
+    const Real gridPrice = swaption->NPV();
+    FmmCallableInstrument inst;
+    inst.style = FmmCallableInstrument::Style::Enter;
+    fillPayerSwapFlows(inst, p, 0, rb.M, K);
+    for (const Size a : {4, 8, 12, 16})
+        inst.rights.push_back({a, a, 0.0});
+    for (Size j = 1; j <= 4; ++j) {
+        inst.floatWeights[j] = 0.0;
+        inst.fixedFlows[j] = 0.0;
+    }
+    FmmLsmConfig cfg;
+    cfg.trainingPaths = 32768;
+    cfg.valuationPaths = 32768;
+    FmmLsmPricer pricer(rb.fmmModel, inst, cfg);
+    const auto lsm = pricer.calculate();
+    rows(pricer, "bermudan payer 5y annual-exercise (replication)", lsm.lowerBound, lsm.lowerBoundSe, gridPrice);
+
+    // (b) callable fixed-rate bond (issuer, annual par calls), no independent truth
+    FmmCallableInstrument bond;
+    bond.style = FmmCallableInstrument::Style::Cancel;
+    bond.lastFlowIdx = rb.M;
+    bond.fixedFlows.assign(rb.M + 1, 0.0);
+    bond.floatWeights.assign(rb.M + 1, 0.0);
+    for (Size c = 4; c <= rb.M; c += 4)
+        bond.fixedFlows[c] -= 0.031 * (p.rateTime(c) - p.rateTime(c - 4));
+    bond.fixedFlows[rb.M] -= 1.0;
+    for (const Size a : {4, 8, 12, 16})
+        bond.rights.push_back({a, a, -1.0});
+    FmmLsmPricer bondPricer(rb.fmmModel, bond, cfg);
+    const auto bondRes = bondPricer.calculate();
+    rows(bondPricer, "callable fixed bond 5y annual par calls (issuer, replication)", bondRes.lowerBoundCv,
+         bondRes.lowerBoundCvSe, Null<Real>());
 }
 
 BOOST_AUTO_TEST_CASE(testShiftAdmissibilityGuard) {
