@@ -31,6 +31,7 @@
 #include <ql/time/daycounters/actual365fixed.hpp>
 
 #include <qle/models/fmmanalytics.hpp>
+#include <qle/models/fmmcalibration.hpp>
 #include <qle/models/fmmparametrization.hpp>
 #include <qle/models/forwardmarketmodel.hpp>
 #include <qle/models/irlgm1fconstantparametrization.hpp>
@@ -882,6 +883,259 @@ BOOST_AUTO_TEST_CASE(testSwaptionApproxAccuracyTable) {
     }
     BOOST_TEST_MESSAGE("WORST ATM CELL: " << worstAtmCell << " (" << worstAtm << " bp); WORST ANY: " << worstAnyCell
                                           << " (" << worstAny << " bp)");
+}
+
+namespace {
+
+// separable testbed: M=20 quarterly grid, DD shift 1/tau, a(t) segments at {1y, 2y, 3y}
+struct CalibBed {
+    explicit CalibBed(const Real flatRate, const Real rhoInf = 0.6) {
+        Settings::instance().evaluationDate() = Date(19, September, 2026);
+        curve = Handle<YieldTermStructure>(
+            QuantLib::ext::make_shared<FlatForward>(0, NullCalendar(), flatRate, Actual365Fixed()));
+        const Size M = 20;
+        Array rateTimes(M + 1);
+        for (Size k = 0; k <= M; ++k)
+            rateTimes[k] = 0.25 * static_cast<Real>(k);
+        Array shifts(M, 4.0); // 1/tau
+        segTimes = Array(3);
+        segTimes[0] = 1.0;
+        segTimes[1] = 2.0;
+        segTimes[2] = 3.0;
+        std::vector<Array> volLevels(M, Array(4, 0.002));
+        parametrization = QuantLib::ext::make_shared<FmmParametrization>(
+            EURCurrency(), curve, rateTimes, shifts, segTimes, volLevels,
+            FmmParametrization::LocalVolType::DisplacedDiffusion, rhoInf, 0.08, 3);
+    }
+    FmmSwapSpec coterminal(const Size a, const Size b = 20) const {
+        FmmSwapSpec s;
+        s.a = a;
+        s.b = b;
+        for (Size c = a + 4; c <= b; c += 4) {
+            s.fixedPayIndices.push_back(c);
+            s.fixedAccruals.push_back(1.0);
+        }
+        return s;
+    }
+    Real atmCapletVol(const Size j) const {
+        const Real F0 = (curve->discount(parametrization->rateTime(j - 1)) /
+                             curve->discount(parametrization->rateTime(j)) -
+                         1.0) /
+                        parametrization->tau(j);
+        return fmmCapletNormalVol(*parametrization, j, F0, true);
+    }
+    Handle<YieldTermStructure> curve;
+    Array segTimes;
+    QuantLib::ext::shared_ptr<FmmParametrization> parametrization;
+};
+
+} // namespace
+
+BOOST_AUTO_TEST_CASE(testCalibrationRoundTrip) {
+    BOOST_TEST_MESSAGE("A3 acceptance 2: joint bootstrap round trip - generate targets from known "
+                       "(Lambda*, a*), recover them...");
+
+    CalibBed bed(0.03);
+    // true separable state
+    FmmSeparableVols truth;
+    truth.segmentTimes = bed.segTimes;
+    truth.a = {1.0, 1.15, 0.9, 1.05};
+    for (Size j = 1; j <= 20; ++j)
+        truth.levels.push_back(0.0022 + 0.00002 * static_cast<Real>(j));
+    truth.apply(*bed.parametrization);
+
+    // targets generated from the model
+    std::vector<FmmCapletVolTarget> capletTargets;
+    for (Size j = 1; j <= 20; ++j)
+        capletTargets.push_back({j, bed.atmCapletVol(j), true});
+    std::vector<FmmSwaptionVolTarget> swaptionTargets;
+    for (const Size a : {4, 8, 12, 16}) {
+        FmmSwaptionVolTarget t;
+        t.swap = bed.coterminal(a);
+        t.normalVol = fmmSwaptionApprox(*bed.parametrization, t.swap,
+                                        fmmForwardSwapRate(*bed.parametrization, t.swap))
+                          .normalVol;
+        std::ostringstream lbl;
+        lbl << "cot_" << a / 4 << "y";
+        t.label = lbl.str();
+        swaptionTargets.push_back(t);
+    }
+
+    // calibrate from a cold start
+    FmmSeparableVols v;
+    v.segmentTimes = bed.segTimes;
+    v.a = {1.0, 1.0, 1.0, 1.0};
+    v.levels.assign(20, 0.004);
+    const auto report = fmmJointBootstrap(*bed.parametrization, v, capletTargets, swaptionTargets);
+    BOOST_TEST_MESSAGE("round trip: iterations " << report.iterations << ", runtime " << report.runtimeSeconds
+                                                 << " s, max |error| " << report.maxAbsErrorBp() << " bp");
+    BOOST_CHECK_MESSAGE(report.converged, "joint bootstrap did not converge");
+    BOOST_CHECK_MESSAGE(report.maxAbsErrorBp() < 1e-3, "repricing error " << report.maxAbsErrorBp() << " bp");
+    // parameter recovery: the effective lambda_j(t) products must match the truth
+    Real worstRel = 0.0;
+    for (Size j = 1; j <= 20; ++j)
+        for (Size k = 0; k < 4; ++k) {
+            const Time tMid = (k == 0 ? 0.5 : bed.segTimes[k - 1] + 0.5);
+            if (tMid >= bed.parametrization->rateTime(j))
+                continue;
+            const Real fit = bed.parametrization->volLevel(j, tMid);
+            const Real tru = truth.levels[j - 1] * truth.a[k];
+            worstRel = std::max(worstRel, std::fabs(fit / tru - 1.0));
+        }
+    BOOST_TEST_MESSAGE("worst relative parameter error " << worstRel);
+    BOOST_CHECK_MESSAGE(worstRel < 5e-5, "parameter recovery error " << worstRel); // solver acc 1e-8 in vol space
+    BOOST_CHECK_SMALL(v.a[0] - 1.0, 1e-14); // identifiability normalization
+}
+
+BOOST_AUTO_TEST_CASE(testCalibrationOnMarketQuotes) {
+    BOOST_TEST_MESSAGE("A3 acceptance 3 (QuantExt level): joint calibration to real USD-SOFR quotes "
+                       "(Products marketdata.csv, 2025-02-10) - convergence, residuals, runtime, "
+                       "bump stability...");
+    // Provenance: SWAPTION/RATE_NVOL/USD/SOFR coterminal-to-5y ATM quotes and CAPFLOOR/RATE_NVOL
+    // USD ATM cap vols used as per-bucket caplet-vol proxies (flat-cap-to-optionlet stripping is
+    // the A5/ORE-plumbing job; the mapping choice is documented in the calibration report).
+    // Curve: flat 4.20% stands in at the observed SOFR level; curve-accurate bootstrap in A5.
+    auto runCalibration = [](const Real flatRate, const Real rhoInf, FmmSeparableVols& v,
+                             FmmCalibrationReport& report) {
+        CalibBed bed(flatRate, rhoInf);
+        std::vector<FmmCapletVolTarget> capletTargets = {{4, 0.0055467, true},
+                                                         {8, 0.0083185, true},
+                                                         {12, 0.0094564, true},
+                                                         {16, 0.0099147, true},
+                                                         {20, 0.0101515, true}};
+        std::vector<FmmSwaptionVolTarget> swaptionTargets;
+        const std::vector<std::pair<Size, Real>> cot = {
+            {4, 0.01029015}, {8, 0.0105039}, {12, 0.0105350}, {16, 0.0104501}};
+        for (const auto& c : cot) {
+            FmmSwaptionVolTarget t;
+            t.swap = bed.coterminal(c.first);
+            t.normalVol = c.second;
+            std::ostringstream lbl;
+            lbl << "cot_" << c.first / 4 << "y_to_5y";
+            t.label = lbl.str();
+            swaptionTargets.push_back(t);
+        }
+        v.segmentTimes = bed.segTimes;
+        v.a = {1.0, 1.0, 1.0, 1.0};
+        v.levels.assign(20, 0.0025);
+        report = fmmJointBootstrap(*bed.parametrization, v, capletTargets, swaptionTargets, 15, 0.01);
+    };
+
+    // ---- part 1: strategy (b) on real coterminal swaption quotes only - exact fit expected ----
+    auto runSwaptionOnly = [](const Real flatRate, FmmSeparableVols& v) {
+        CalibBed bed(flatRate, 0.9);
+        std::vector<FmmSwaptionVolTarget> swaptionTargets;
+        const std::vector<std::pair<Size, Real>> cot = {
+            {4, 0.01029015}, {8, 0.0105039}, {12, 0.0105350}, {16, 0.0104501}};
+        for (const auto& c : cot) {
+            FmmSwaptionVolTarget t;
+            t.swap = bed.coterminal(c.first);
+            t.normalVol = c.second;
+            swaptionTargets.push_back(t);
+        }
+        v.segmentTimes = bed.segTimes;
+        v.a = {1.0, 1.0, 1.0, 1.0};
+        v.levels.assign(20, 0.0025);
+        fmmSwaptionTimeDependenceBootstrap(*bed.parametrization, v, swaptionTargets);
+        Real worst = 0.0;
+        for (const auto& t : swaptionTargets)
+            worst = std::max(worst, std::fabs(fmmSwaptionApprox(*bed.parametrization, t.swap,
+                                                                fmmForwardSwapRate(*bed.parametrization, t.swap))
+                                                  .normalVol -
+                                              t.normalVol) *
+                                        1e4);
+        return worst;
+    };
+    FmmSeparableVols vB;
+    const Real worstB = runSwaptionOnly(0.042, vB);
+    BOOST_TEST_MESSAGE("strategy (b), real coterminals: worst residual " << worstB << " bp; a(t) = {"
+                                                                         << vB.a[0] << ", " << vB.a[1] << ", "
+                                                                         << vB.a[2] << ", " << vB.a[3] << "}");
+    BOOST_CHECK_MESSAGE(worstB < 0.01, "strategy (b) residual " << worstB << " bp");
+    BOOST_CHECK_SMALL(vB.a[0] - 1.0, 1e-14);
+
+    // ---- part 2: joint (c) with FLAT-CAP vols as caplet proxies - a DOCUMENTED BASIS FINDING:
+    // flat cap vols average the small front optionlets of the steep 2025 vol term structure and
+    // so understate the per-bucket optionlet vols; correlation cannot close the gap (the mean
+    // caplet residual is ~-3 bp across rhoInf in [0.3, 0.999]). Proper cap->optionlet stripping
+    // is the A5/ORE-plumbing deliverable; until then the residuals below are the honest record.
+    FmmSeparableVols v;
+    FmmCalibrationReport report;
+    runCalibration(0.042, 0.9, v, report);
+    Real worstCapletBp = 0.0, worstSwaptionBp = 0.0;
+    for (const auto& r : report.rows) {
+        BOOST_TEST_MESSAGE(r.instrument << ": market " << r.marketVol * 1e4 << " bp, model " << r.modelVol * 1e4
+                                        << " bp, error " << r.errorBp << " bp");
+        if (r.instrument.rfind("caplet", 0) == 0)
+            worstCapletBp = std::max(worstCapletBp, std::fabs(r.errorBp));
+        else
+            worstSwaptionBp = std::max(worstSwaptionBp, std::fabs(r.errorBp));
+    }
+    BOOST_TEST_MESSAGE("joint on cap-proxy targets: iterations " << report.iterations << ", runtime "
+                                                                 << report.runtimeSeconds << " s; swaptions exact to "
+                                                                 << worstSwaptionBp << " bp, cap-proxy basis up to "
+                                                                 << worstCapletBp << " bp");
+    BOOST_CHECK_MESSAGE(worstSwaptionBp < 0.01, "swaption residual " << worstSwaptionBp << " bp");
+    BOOST_CHECK_MESSAGE(worstCapletBp < 5.0, "cap-proxy basis unexpectedly large: " << worstCapletBp << " bp");
+
+    // ---- part 3: correlation recovery on CONSISTENT targets - generate caplet + swaption vols
+    // from rhoInf* = 0.85, recalibrate with the outer solve, recover the correlation ----
+    auto makeConsistentTargets = [&](const Real rhoInf, std::vector<FmmCapletVolTarget>& caps,
+                                     std::vector<FmmSwaptionVolTarget>& swps) {
+        CalibBed bed(0.042, rhoInf);
+        FmmSeparableVols truth;
+        truth.segmentTimes = bed.segTimes;
+        truth.a = {1.0, 1.1, 0.95, 1.02};
+        truth.levels.assign(20, 0.0026);
+        truth.apply(*bed.parametrization);
+        for (const Size j : {4, 8, 12, 16, 20})
+            caps.push_back({j, bed.atmCapletVol(j), true});
+        for (const Size a : {4, 8, 12, 16}) {
+            FmmSwaptionVolTarget t;
+            t.swap = bed.coterminal(a);
+            t.normalVol = fmmSwaptionApprox(*bed.parametrization, t.swap,
+                                            fmmForwardSwapRate(*bed.parametrization, t.swap))
+                              .normalVol;
+            swps.push_back(t);
+        }
+    };
+    std::vector<FmmCapletVolTarget> capsC;
+    std::vector<FmmSwaptionVolTarget> swpsC;
+    makeConsistentTargets(0.85, capsC, swpsC);
+    auto meanCapletResidual = [&](const Real rhoInf) {
+        CalibBed bed(0.042, rhoInf);
+        FmmSeparableVols vT;
+        vT.segmentTimes = bed.segTimes;
+        vT.a = {1.0, 1.0, 1.0, 1.0};
+        vT.levels.assign(20, 0.0025);
+        const auto rep = fmmJointBootstrap(*bed.parametrization, vT, capsC, swpsC, 12, 0.01);
+        Real sum = 0.0;
+        Size n = 0;
+        for (const auto& r : rep.rows)
+            if (r.instrument.rfind("caplet", 0) == 0) {
+                sum += r.errorBp;
+                ++n;
+            }
+        return sum / static_cast<Real>(n);
+    };
+    Brent rhoSolver;
+    const Real rhoStar = rhoSolver.solve(meanCapletResidual, 1e-4, 0.8, 0.40, 0.999);
+    BOOST_TEST_MESSAGE("correlation recovery: rhoInf* = " << rhoStar << " (truth 0.85)");
+    BOOST_CHECK_MESSAGE(std::fabs(rhoStar - 0.85) < 0.02, "rho recovery failed: " << rhoStar);
+
+    // ---- owner requirement: parameter stability under a +10 bp parallel bump (strategy (b)) ----
+    FmmSeparableVols vBumped;
+    const Real worstBumped = runSwaptionOnly(0.043, vBumped);
+    Real worstMove = 0.0;
+    for (Size j = 0; j < 20; ++j)
+        for (Size k = 0; k < 4; ++k)
+            worstMove = std::max(worstMove, std::fabs(vBumped.levels[j] * vBumped.a[k] /
+                                                          (vB.levels[j] * vB.a[k]) -
+                                                      1.0));
+    BOOST_TEST_MESSAGE("bump stability: worst relative parameter move " << worstMove << ", bumped residual "
+                                                                        << worstBumped << " bp");
+    BOOST_CHECK_MESSAGE(worstMove < 0.10, "unstable under bump: " << worstMove);
+    BOOST_CHECK_MESSAGE(worstBumped < 0.01, "bumped fit degraded: " << worstBumped << " bp");
 }
 
 BOOST_AUTO_TEST_CASE(testShiftAdmissibilityGuard) {
