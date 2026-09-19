@@ -35,12 +35,16 @@ jobs:
         forkenv\Scripts\python -m pip install --quiet $whl
         stockenv\Scripts\python -c "import ORE; print('stock ORE OK')"
         forkenv\Scripts\python -c "import ORE; print('fork ORE OK')"
-    - name: run both parity legs on Examples/MinimalSetup
+    - name: stock leg on Examples/MinimalSetup
       run: |
         Copy-Item Examples\MinimalSetup p_stock -Recurse
-        Copy-Item Examples\MinimalSetup p_fork -Recurse
         stockenv\Scripts\python a0_wheel_parity.py run p_stock npv_stock.csv
+        if ($LASTEXITCODE -ne 0) { exit 1 }
+    - name: fork leg on Examples/MinimalSetup
+      run: |
+        Copy-Item Examples\MinimalSetup p_fork -Recurse
         forkenv\Scripts\python a0_wheel_parity.py run p_fork npv_fork.csv
+        if ($LASTEXITCODE -ne 0) { exit 1 }
     - name: compare
       run: |
         python a0_wheel_parity.py compare npv_stock.csv npv_fork.csv 1e-8
