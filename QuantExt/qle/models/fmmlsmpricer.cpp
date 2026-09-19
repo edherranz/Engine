@@ -82,10 +82,12 @@ Array FmmLsmPricer::regressorsAt(const ForwardMarketModel::State& st, const Size
     const Real pEnd = model_->discountBond(st, p.rateTime(last));
     for (Size j = rt.noticeIdx + 1; j <= last; ++j)
         annuity += p.tau(j) * model_->discountBond(st, p.rateTime(j));
+    const Real sdT = spreadDf(st.t);
     for (Size j = rt.settleIdx + 1; j <= last; ++j) {
         const Real pj = model_->discountBond(st, p.rateTime(j));
         const Real pjm = model_->discountBond(st, p.rateTime(j - 1));
-        mark += instrument_.fixedFlows[j] * pj + instrument_.floatWeights[j] * (pjm - pj);
+        mark += (instrument_.fixedFlows[j] * pj + instrument_.floatWeights[j] * (pjm - pj)) *
+                spreadDf(p.rateTime(j)) / sdT;
     }
     Array x(3);
     x[0] = annuity > QL_EPSILON ? (1.0 - pEnd) / annuity : 0.0;
@@ -126,7 +128,7 @@ void FmmLsmPricer::simulate(const Size paths, const BigNatural seed, const Seque
             const auto& st = path.states[j - 1];
             bank[j] = model_->bankAccount(st);
             const Real flow = instrument_.fixedFlows[j] + instrument_.floatWeights[j] * p.tau(j) * st.R[j - 1];
-            d.deflatedFlows[j] = flow / bank[j];
+            d.deflatedFlows[j] = flow / bank[j] * spreadDf(p.rateTime(j));
             total += d.deflatedFlows[j];
         }
         d.regressors.resize(nRights);
@@ -139,7 +141,8 @@ void FmmLsmPricer::simulate(const Size paths, const BigNatural seed, const Seque
             for (Size j = rt.settleIdx + 1; j <= last; ++j)
                 sw += d.deflatedFlows[j];
             d.switchedValue[r] = sw;
-            d.deflatedFee[r] = rt.feeFlow * model_->discountBond(st, p.rateTime(rt.settleIdx)) / bank[rt.noticeIdx];
+            d.deflatedFee[r] = rt.feeFlow * model_->discountBond(st, p.rateTime(rt.settleIdx)) *
+                               spreadDf(p.rateTime(rt.settleIdx)) / spreadDf(st.t) / bank[rt.noticeIdx];
             d.regressors[r] = regressorsAt(st, r, bank[rt.noticeIdx]);
         }
         d.deflatedFlows[0] = total; // cache the never-exercise total in slot 0
@@ -216,7 +219,8 @@ FmmLsmResult FmmLsmPricer::calculate() {
         for (Size j = 1; j <= instrument_.lastFlowIdx; ++j) {
             const Real pj = p.termStructure()->discount(p.rateTime(j));
             const Real pjm = p.termStructure()->discount(p.rateTime(j - 1));
-            u += instrument_.fixedFlows[j] * pj + instrument_.floatWeights[j] * (pjm - pj);
+            u += (instrument_.fixedFlows[j] * pj + instrument_.floatWeights[j] * (pjm - pj)) *
+                 spreadDf(p.rateTime(j));
         }
         res.underlyingValue = u;
     }
@@ -296,7 +300,8 @@ Real FmmLsmPricer::innerPolicyValue(const ForwardMarketModel::State& start, cons
             z[q] = normal();
         model_->evolve(st, steps[j - 1], z);
         const Real bank = model_->bankAccount(st);
-        const Real flow = (instrument_.fixedFlows[j] + instrument_.floatWeights[j] * p.tau(j) * st.R[j - 1]) / bank;
+        const Real flow = (instrument_.fixedFlows[j] + instrument_.floatWeights[j] * p.tau(j) * st.R[j - 1]) /
+                          bank * spreadDf(p.rateTime(j));
         if (exercised) {
             if (j > settleIdx)
                 switched += flow;
@@ -311,7 +316,8 @@ Real FmmLsmPricer::innerPolicyValue(const ForwardMarketModel::State& start, cons
             if (exerciseDecision(x, r, pol)) {
                 exercised = true;
                 settleIdx = rt.settleIdx;
-                feeDeflated = rt.feeFlow * model_->discountBond(st, p.rateTime(rt.settleIdx)) / bank;
+                feeDeflated = rt.feeFlow * model_->discountBond(st, p.rateTime(rt.settleIdx)) *
+                              spreadDf(p.rateTime(rt.settleIdx)) / spreadDf(st.t) / bank;
                 if (!enter && settleIdx == j)
                     return acc + feeDeflated; // Cancel with immediate settlement: value is known
             }
@@ -363,7 +369,7 @@ FmmDualBoundResult FmmLsmPricer::dualBound(const Size outerPaths, const Size inn
             o.bank[j] = model_->bankAccount(o.states[j - 1]);
             const Real flow =
                 (instrument_.fixedFlows[j] + instrument_.floatWeights[j] * p.tau(j) * o.states[j - 1].R[j - 1]) /
-                o.bank[j];
+                o.bank[j] * spreadDf(p.rateTime(j));
             o.prefix[j] = o.prefix[j - 1] + flow;
         }
         // frozen-policy value along the outer path (lower-bound sample)
@@ -372,7 +378,8 @@ FmmDualBoundResult FmmLsmPricer::dualBound(const Size outerPaths, const Size inn
             const auto& rt = instrument_.rights[r];
             const auto& st = o.states[rt.noticeIdx - 1];
             if (exerciseDecision(regressorsAt(st, r, o.bank[rt.noticeIdx]), r, policy_)) {
-                const Real fee = rt.feeFlow / o.bank[rt.noticeIdx];
+                const Real fee = rt.feeFlow * model_->discountBond(st, p.rateTime(rt.settleIdx)) *
+                                 spreadDf(p.rateTime(rt.settleIdx)) / spreadDf(st.t) / o.bank[rt.noticeIdx];
                 lower = enter ? (o.prefix[last] - o.prefix[rt.settleIdx]) + fee : o.prefix[rt.settleIdx] + fee;
                 break;
             }

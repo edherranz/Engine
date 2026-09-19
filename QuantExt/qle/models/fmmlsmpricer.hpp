@@ -46,6 +46,9 @@ struct FmmCallableInstrument {
     enum class Style { Enter, Cancel };
     Style style = Style::Cancel;
     Size lastFlowIdx = 0;             //!< largest grid index carrying a flow
+    //! deterministic additive discounting spread over the RFR curve (FMM_SPEC.md section 8),
+    //! applied to every flow and fee of this instrument: risky DF = P(t,T) exp(-spread (T-t))
+    Real issuerSpread = 0.0;
     std::vector<Real> fixedFlows;     //!< size M+1; amount paid at T_j (index 0 unused)
     std::vector<Real> floatWeights;   //!< size M+1; coefficient of tau_j R_j(T_j) paid at T_j
     struct Right {
@@ -120,6 +123,8 @@ public:
     FmmDualBoundResult dualBound(const Size outerPaths, const Size innerPaths, const BigNatural seed) const;
 
 private:
+    //! deterministic issuer-spread discount factor anchored at time 0
+    Real spreadDf(const Time T) const { return std::exp(-instrument_.issuerSpread * T); }
     //! regressors at a right given the state at its notice date
     Array regressorsAt(const ForwardMarketModel::State& state, const Size r, const Real bank) const;
     //! policy decision at right r for the given regressors

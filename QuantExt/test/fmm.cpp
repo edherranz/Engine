@@ -1489,6 +1489,222 @@ BOOST_AUTO_TEST_CASE(testLsmCancellableParity) {
     BOOST_CHECK_MESSAGE(std::fabs(lhs - rhs) < 3.0 * se + 2e-5, "cancellable parity violated: " << lhs - rhs);
 }
 
+namespace {
+
+// prints one duality-gap table row and checks the bound ordering
+void gapRow(FmmLsmPricer& pricer, const std::string& label, const Real lsmLower, const Real lsmLowerSe) {
+    const auto dual = pricer.dualBound(512, 64, 20260920);
+    const Real gap = dual.upperBound - lsmLower;
+    BOOST_TEST_MESSAGE("DUALITY-GAP ROW | " << label << " | lower(32k) " << lsmLower << " +/- " << lsmLowerSe
+                                            << " | upper " << dual.upperBound << " +/- " << dual.upperBoundSe
+                                            << " | gap " << gap << " (" << 100.0 * gap / std::fabs(lsmLower)
+                                            << "% of |value|) | " << dual.runtimeSeconds << " s");
+    BOOST_CHECK_MESSAGE(gap > -3.0 * std::sqrt(dual.upperBoundSe * dual.upperBoundSe + lsmLowerSe * lsmLowerSe),
+                        label << ": upper bound below lower bound beyond noise, gap " << gap);
+}
+
+} // namespace
+
+BOOST_AUTO_TEST_CASE(testLsmCallableBondIdentity) {
+    BOOST_TEST_MESSAGE("A4 product 3: callable fixed-rate bond (issuer, par calls) == bond - Bermudan "
+                       "receiver swaption at zero issuer spread; spread sensitivity; gap row...");
+    FmmTestBed bed(FmmParametrization::LocalVolType::DisplacedDiffusion, 0.0025, -1.0, 3);
+    const auto& p = *bed.parametrization;
+    const Real coupon = 0.031;
+    const std::vector<FmmCallableInstrument::Right> rights = {{4, 4, -1.0}, {8, 8, -1.0}, {12, 12, -1.0}, {16, 16, -1.0}};
+
+    // issuer's callable bond: pays annual coupons and principal, may call at par (fee -1 at settle)
+    FmmCallableInstrument bond;
+    bond.style = FmmCallableInstrument::Style::Cancel;
+    bond.lastFlowIdx = 20;
+    bond.fixedFlows.assign(21, 0.0);
+    bond.floatWeights.assign(21, 0.0);
+    for (Size c = 4; c <= 20; c += 4)
+        bond.fixedFlows[c] -= coupon * (p.rateTime(c) - p.rateTime(c - 4));
+    bond.fixedFlows[20] -= 1.0;
+    bond.rights = rights;
+    FmmLsmConfig cfg;
+    cfg.trainingPaths = 32768;
+    cfg.valuationPaths = 32768;
+    FmmLsmPricer bondPricer(bed.model, bond, cfg);
+    const auto bondRes = bondPricer.calculate();
+
+    // decomposition: straight bond liability + Bermudan option to ENTER the receiver remainder
+    // (receive fixed coupon, pay float) - exact at zero spread since the float leg + par is par
+    FmmCallableInstrument recv;
+    recv.style = FmmCallableInstrument::Style::Enter;
+    fillPayerSwapFlows(recv, p, 0, 20, coupon, -1.0);
+    for (auto& r : recv.rights = rights)
+        r.feeFlow = 0.0;
+    FmmLsmConfig cfgB = cfg;
+    cfgB.trainingSeed = 111;
+    cfgB.valuationSeed = 222222;
+    FmmLsmPricer optPricer(bed.model, recv, cfgB);
+    const auto optRes = optPricer.calculate();
+
+    const Real lhs = bondRes.lowerBound;
+    const Real rhs = bondRes.underlyingValue + optRes.lowerBound;
+    const Real se = std::sqrt(bondRes.lowerBoundSe * bondRes.lowerBoundSe + optRes.lowerBoundSe * optRes.lowerBoundSe);
+    BOOST_TEST_MESSAGE("callable bond (issuer) " << lhs << " +/- " << bondRes.lowerBoundSe << "; straight bond "
+                                                  << bondRes.underlyingValue << " + bermudan receiver "
+                                                  << optRes.lowerBound << " = " << rhs << "; diff " << lhs - rhs
+                                                  << " vs 3 s.e. " << 3.0 * se);
+    BOOST_CHECK_MESSAGE(std::fabs(lhs - rhs) < 3.0 * se + 2e-5, "callable bond identity violated: " << lhs - rhs);
+    gapRow(bondPricer, "callable fixed bond 5y annual par calls (issuer)", bondRes.lowerBound, bondRes.lowerBoundSe);
+
+    // issuer spread 50 bp: liability PV magnitude shrinks (value less negative), option changes
+    FmmCallableInstrument bondSpread = bond;
+    bondSpread.issuerSpread = 0.005;
+    FmmLsmPricer spreadPricer(bed.model, bondSpread, cfg);
+    const auto spreadRes = spreadPricer.calculate();
+    BOOST_TEST_MESSAGE("with 50 bp issuer spread: callable bond " << spreadRes.lowerBound << " (straight "
+                                                                  << spreadRes.underlyingValue << ")");
+    BOOST_CHECK_MESSAGE(spreadRes.underlyingValue > bondRes.underlyingValue,
+                        "issuer spread must reduce the liability magnitude");
+    BOOST_CHECK_MESSAGE(spreadRes.lowerBound > bondRes.lowerBound - 3.0 * (spreadRes.lowerBoundSe + bondRes.lowerBoundSe),
+                        "callable value with spread not consistent");
+}
+
+BOOST_AUTO_TEST_CASE(testLsmAccretingNoteAndSwap) {
+    BOOST_TEST_MESSAGE("A4 product 4: callable accreting zero note (calls at accreted value) == "
+                       "zero liability - Bermudan zero-bond option; accreting cancellable swap parity; "
+                       "gap rows...");
+    FmmTestBed bed(FmmParametrization::LocalVolType::DisplacedDiffusion, 0.0025, -1.0, 3);
+    const auto& p = *bed.parametrization;
+    const Real accRate = 0.032;
+    auto accreted = [&](const Time t) { return std::pow(1.0 + accRate, t); };
+
+    // non-call 2y, then annual calls at accreted value; single payment of accreted principal at 5y
+    FmmCallableInstrument note;
+    note.style = FmmCallableInstrument::Style::Cancel;
+    note.lastFlowIdx = 20;
+    note.fixedFlows.assign(21, 0.0);
+    note.floatWeights.assign(21, 0.0);
+    note.fixedFlows[20] = -accreted(p.rateTime(20));
+    for (const Size a : {8, 12, 16})
+        note.rights.push_back({a, a, -accreted(p.rateTime(a))});
+    FmmLsmConfig cfg;
+    cfg.trainingPaths = 32768;
+    cfg.valuationPaths = 32768;
+    FmmLsmPricer notePricer(bed.model, note, cfg);
+    const auto noteRes = notePricer.calculate();
+
+    // the call option as an Enter instrument: on exercise the issuer stops the maturity payment
+    // (receives it back) and pays the accreted value at settle
+    FmmCallableInstrument opt;
+    opt.style = FmmCallableInstrument::Style::Enter;
+    opt.lastFlowIdx = 20;
+    opt.fixedFlows.assign(21, 0.0);
+    opt.floatWeights.assign(21, 0.0);
+    opt.fixedFlows[20] = +accreted(p.rateTime(20));
+    for (const Size a : {8, 12, 16})
+        opt.rights.push_back({a, a, -accreted(p.rateTime(a))});
+    FmmLsmConfig cfgB = cfg;
+    cfgB.trainingSeed = 333;
+    cfgB.valuationSeed = 444444;
+    FmmLsmPricer optPricer(bed.model, opt, cfgB);
+    const auto optRes = optPricer.calculate();
+
+    const Real lhs = noteRes.lowerBound;
+    const Real rhs = noteRes.underlyingValue + optRes.lowerBound;
+    const Real se = std::sqrt(noteRes.lowerBoundSe * noteRes.lowerBoundSe + optRes.lowerBoundSe * optRes.lowerBoundSe);
+    BOOST_TEST_MESSAGE("accreting callable note " << lhs << "; zero liability " << noteRes.underlyingValue
+                                                  << " + bermudan zero-bond option " << optRes.lowerBound << " = "
+                                                  << rhs << "; diff " << lhs - rhs << " vs 3 s.e. " << 3.0 * se);
+    BOOST_CHECK_MESSAGE(std::fabs(lhs - rhs) < 3.0 * se + 2e-5, "accreting note identity violated: " << lhs - rhs);
+    std::ostringstream probs;
+    for (Size r = 0; r < noteRes.exerciseProbability.size(); ++r)
+        probs << " " << noteRes.exerciseProbability[r];
+    BOOST_TEST_MESSAGE("accreting note call probabilities (2y,3y,4y):" << probs.str() << "; never "
+                                                                       << noteRes.noExerciseProbability);
+    gapRow(notePricer, "callable accreting zero note 5yNC2 (issuer)", noteRes.lowerBound, noteRes.lowerBoundSe);
+
+    // matching accreting cancellable swap: notional accretes, fixed coupon accRate on the
+    // accreted notional, float on the accreted notional; cancel rights as the note's calls
+    FmmCallableInstrument accSwap;
+    accSwap.style = FmmCallableInstrument::Style::Cancel;
+    accSwap.lastFlowIdx = 20;
+    accSwap.fixedFlows.assign(21, 0.0);
+    accSwap.floatWeights.assign(21, 0.0);
+    for (Size j = 1; j <= 20; ++j)
+        accSwap.floatWeights[j] = accreted(p.rateTime(j - 1)); // receive float on accreted notional
+    for (Size c = 4; c <= 20; c += 4)
+        accSwap.fixedFlows[c] = -accRate * (p.rateTime(c) - p.rateTime(c - 4)) * accreted(p.rateTime(c - 4));
+    for (const Size a : {8, 12, 16})
+        accSwap.rights.push_back({a, a, 0.0});
+    FmmLsmPricer accSwapPricer(bed.model, accSwap, cfg);
+    const auto accSwapRes = accSwapPricer.calculate();
+    // parity vs swap + Bermudan option to enter the offsetting (receiver) accreting remainder
+    FmmCallableInstrument accRecv = accSwap;
+    accRecv.style = FmmCallableInstrument::Style::Enter;
+    for (Size j = 1; j <= 20; ++j) {
+        accRecv.floatWeights[j] *= -1.0;
+        accRecv.fixedFlows[j] *= -1.0;
+    }
+    FmmLsmPricer accRecvPricer(bed.model, accRecv, cfgB);
+    const auto accRecvRes = accRecvPricer.calculate();
+    const Real diffAcc = accSwapRes.lowerBound - (accSwapRes.underlyingValue + accRecvRes.lowerBound);
+    const Real seAcc = std::sqrt(accSwapRes.lowerBoundSe * accSwapRes.lowerBoundSe +
+                                 accRecvRes.lowerBoundSe * accRecvRes.lowerBoundSe);
+    BOOST_TEST_MESSAGE("accreting cancellable swap " << accSwapRes.lowerBound << " vs swap+option "
+                                                     << accSwapRes.underlyingValue + accRecvRes.lowerBound
+                                                     << "; diff " << diffAcc << " vs 3 s.e. " << 3.0 * seAcc);
+    BOOST_CHECK_MESSAGE(std::fabs(diffAcc) < 3.0 * seAcc + 2e-5, "accreting swap parity violated: " << diffAcc);
+    gapRow(accSwapPricer, "accreting cancellable swap 5yNC2", accSwapRes.lowerBound, accSwapRes.lowerBoundSe);
+}
+
+BOOST_AUTO_TEST_CASE(testLsmStepUpNote) {
+    BOOST_TEST_MESSAGE("A4 product 5: callable step-up note (issuer, par calls) == bond - Bermudan "
+                       "receiver on the step-up coupon; gap row...");
+    FmmTestBed bed(FmmParametrization::LocalVolType::DisplacedDiffusion, 0.0025, -1.0, 3);
+    const auto& p = *bed.parametrization;
+    const std::vector<Real> coupons = {0.025, 0.0275, 0.030, 0.0325, 0.035}; // annual step-up
+    const std::vector<FmmCallableInstrument::Right> rights = {{4, 4, -1.0}, {8, 8, -1.0}, {12, 12, -1.0}, {16, 16, -1.0}};
+
+    FmmCallableInstrument note;
+    note.style = FmmCallableInstrument::Style::Cancel;
+    note.lastFlowIdx = 20;
+    note.fixedFlows.assign(21, 0.0);
+    note.floatWeights.assign(21, 0.0);
+    for (Size y = 1; y <= 5; ++y)
+        note.fixedFlows[4 * y] -= coupons[y - 1] * (p.rateTime(4 * y) - p.rateTime(4 * y - 4));
+    note.fixedFlows[20] -= 1.0;
+    note.rights = rights;
+    FmmLsmConfig cfg;
+    cfg.trainingPaths = 32768;
+    cfg.valuationPaths = 32768;
+    FmmLsmPricer notePricer(bed.model, note, cfg);
+    const auto noteRes = notePricer.calculate();
+
+    FmmCallableInstrument recv;
+    recv.style = FmmCallableInstrument::Style::Enter;
+    recv.lastFlowIdx = 20;
+    recv.fixedFlows.assign(21, 0.0);
+    recv.floatWeights.assign(21, 0.0);
+    for (Size j = 1; j <= 20; ++j)
+        recv.floatWeights[j] = -1.0; // pay float
+    for (Size y = 1; y <= 5; ++y)
+        recv.fixedFlows[4 * y] += coupons[y - 1] * (p.rateTime(4 * y) - p.rateTime(4 * y - 4)); // receive step-up
+    for (auto r : rights) {
+        r.feeFlow = 0.0;
+        recv.rights.push_back(r);
+    }
+    FmmLsmConfig cfgB = cfg;
+    cfgB.trainingSeed = 555;
+    cfgB.valuationSeed = 666666;
+    FmmLsmPricer optPricer(bed.model, recv, cfgB);
+    const auto optRes = optPricer.calculate();
+
+    const Real lhs = noteRes.lowerBound;
+    const Real rhs = noteRes.underlyingValue + optRes.lowerBound;
+    const Real se = std::sqrt(noteRes.lowerBoundSe * noteRes.lowerBoundSe + optRes.lowerBoundSe * optRes.lowerBoundSe);
+    BOOST_TEST_MESSAGE("step-up callable note " << lhs << "; straight " << noteRes.underlyingValue
+                                                << " + bermudan receiver " << optRes.lowerBound << " = " << rhs
+                                                << "; diff " << lhs - rhs << " vs 3 s.e. " << 3.0 * se);
+    BOOST_CHECK_MESSAGE(std::fabs(lhs - rhs) < 3.0 * se + 2e-5, "step-up note identity violated: " << lhs - rhs);
+    gapRow(notePricer, "callable step-up note 5y annual par calls (issuer)", noteRes.lowerBound, noteRes.lowerBoundSe);
+}
+
 BOOST_AUTO_TEST_CASE(testExerciseTransferConfigurable) {
     BOOST_TEST_MESSAGE("A4 product 6 (owner-specified design): configurable imported-policy "
                        "scenario - issuer-optimal note call vs the dealer's frozen swap-"
