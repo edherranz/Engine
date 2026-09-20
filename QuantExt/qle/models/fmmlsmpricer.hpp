@@ -50,6 +50,15 @@ struct FmmCallableInstrument {
     Real issuerSpread = 0.0;
     std::vector<Real> fixedFlows;     //!< size M+1; amount paid at T_j (index 0 unused)
     std::vector<Real> floatWeights;   //!< size M+1; coefficient of tau_j R_j(T_j) paid at T_j
+    //! compounded-RFR coupon over the grid periods (startIdx, endIdx], paid at T_pay (payIdx >=
+    //! endIdx): amount = weight * (prod_{k} (1 + tau_k R_k) - 1) + spreadAmount. Pathwise it equals
+    //! weight * (B(T_end)/B(T_start) - 1) + spreadAmount by the bank-account identity, so the
+    //! deflated sum telescopes exactly like grid-period floats (ore-fmm docs/A5_PLAN.md section 4)
+    struct CompoundedFloat {
+        Size startIdx = 0, endIdx = 0, payIdx = 0;
+        Real weight = 0.0, spreadAmount = 0.0;
+    };
+    std::vector<CompoundedFloat> compoundedFloats;
     struct Right {
         Size noticeIdx = 0; //!< decision taken at T_notice (grid index)
         Size settleIdx = 0; //!< settlement/effective grid index, >= noticeIdx
@@ -58,6 +67,10 @@ struct FmmCallableInstrument {
     std::vector<Right> rights; //!< ascending notice indices
     void validate(const Size M) const;
 };
+
+//! t = 0 curve value of an instrument's flows (fixed, grid floats, compounded floats), with the
+//! issuer-spread discounting; the underlying value of a Cancel-style structure
+Real fmmUnderlyingCurveValue(const FmmCallableInstrument& instrument, const FmmParametrization& p);
 
 struct FmmLsmConfig {
     Size trainingPaths = 16384;
@@ -160,9 +173,13 @@ public:
 private:
     //! deterministic issuer-spread discount factor anchored at time 0
     Real spreadDf(const Time T) const { return std::exp(-instrument_.issuerSpread * T); }
-    //! deflated (by `bank`) value at the state's date of the flows with grid index in (from, to],
-    //! marked on the state's curve
-    Real markDeflated(const ForwardMarketModel::State& state, const Size from, const Size to, const Real bank) const;
+    //! realized flow paid at T_j given the state at T_j (rates R_k, k <= j, are fixed)
+    Real realizedFlow(const Size j, const ForwardMarketModel::State& state) const;
+    //! deflated (by `bank`) value at the state's date T_atIdx of the flows paid at grid indices in
+    //! (from, to], marked on the state's curve (compounded coupons partly accrued at T_atIdx use
+    //! their fixed rates for the elapsed periods)
+    Real markDeflated(const ForwardMarketModel::State& state, const Size atIdx, const Size from, const Size to,
+                      const Real bank) const;
     //! deflated (by `bank`) value at the state's date of right r's fee paid at its settlement
     Real feeDeflated(const ForwardMarketModel::State& state, const Size r, const Real bank) const;
     //! regressors at a right given the state at its notice date

@@ -33,7 +33,15 @@
 #include <qle/instruments/callablebond.hpp>
 #include <qle/models/fmmanalytics.hpp>
 #include <qle/models/fmmcalibration.hpp>
+#include <qle/models/fmmgrid.hpp>
+#include <qle/models/fmmirmodel.hpp>
 #include <qle/models/fmmlsmpricer.hpp>
+#include <qle/pricingengines/fmmanalyticswaptionengine.hpp>
+#include <qle/pricingengines/fmmlsmcallablebondengine.hpp>
+#include <qle/pricingengines/fmmlsmmultilegoptionengine.hpp>
+
+#include <ql/cashflows/overnightindexedcoupon.hpp>
+#include <ql/instruments/vanillaswap.hpp>
 #include <qle/models/fmmparametrization.hpp>
 #include <qle/models/forwardmarketmodel.hpp>
 #include <qle/models/irlgm1fconstantparametrization.hpp>
@@ -2558,6 +2566,252 @@ BOOST_AUTO_TEST_CASE(testLsmAccretingNote30NC5) {
     BOOST_CHECK_MESSAGE(std::fabs(diffAcc) < 3.0 * seAcc, "30NC5 accreting swap parity violated: " << diffAcc);
     pairedIdentityCheck(accSwapPricer, accRecvPricer, accSwapRes.underlyingValue, "30NC5 accreting cancellable swap",
                         accRecvRes.lowerBound);
+}
+
+BOOST_AUTO_TEST_CASE(testLsmCompoundedCouponIdentity) {
+    BOOST_TEST_MESSAGE("A5.1: a compounded-RFR float leg (annual coupons over four grid periods) is pathwise "
+                       "identical to the quarterly grid-float representation - same LSM value, policy and "
+                       "exercise statistics on the same paths...");
+    FmmTestBed bed(FmmParametrization::LocalVolType::DisplacedDiffusion, 0.0025, -1.0, 3);
+    const auto& p = *bed.parametrization;
+    const Real K = 0.031, spread = 0.0015;
+    const std::vector<FmmCallableInstrument::Right> rights = {{4, 4, 0.0}, {8, 8, 0.0}, {12, 12, 0.0}, {16, 16, 0.0}};
+    // quarterly representation: receive tau_j R_j each quarter plus the spread as fixed amounts
+    FmmCallableInstrument quarterly;
+    quarterly.style = FmmCallableInstrument::Style::Cancel;
+    fillPayerSwapFlows(quarterly, p, 0, 20, K);
+    for (Size c = 4; c <= 20; c += 4)
+        quarterly.fixedFlows[c] += spread * (p.rateTime(c) - p.rateTime(c - 4));
+    quarterly.rights = rights;
+    // compounded representation: annual coupons prod(1 + tau R) - 1 with the spread amount
+    FmmCallableInstrument compounded = quarterly;
+    compounded.floatWeights.assign(21, 0.0);
+    for (Size c = 4; c <= 20; c += 4)
+        compounded.compoundedFloats.push_back({c - 4, c, c, 1.0, 0.0});
+    FmmLsmConfig cfg;
+    cfg.trainingPaths = 8192;
+    cfg.valuationPaths = 8192;
+    FmmLsmPricer pq(bed.model, quarterly, cfg), pc(bed.model, compounded, cfg);
+    const auto rq = pq.calculate(), rc = pc.calculate();
+    BOOST_TEST_MESSAGE("quarterly " << rq.lowerBound << " (underlying " << rq.underlyingValue << "), compounded "
+                                    << rc.lowerBound << " (underlying " << rc.underlyingValue << "), diff "
+                                    << rc.lowerBound - rq.lowerBound);
+    BOOST_CHECK_SMALL(rc.underlyingValue - rq.underlyingValue, 1e-13);
+    BOOST_CHECK_SMALL(rc.lowerBound - rq.lowerBound, 1e-11);
+    BOOST_CHECK_SMALL(rc.lowerBoundCv - rq.lowerBoundCv, 1e-11);
+    for (Size r = 0; r < rights.size(); ++r)
+        BOOST_CHECK_SMALL(rc.exerciseProbability[r] - rq.exerciseProbability[r], 1e-12);
+    // a coupon paid one period after its accrual end (payment delay) is a different, valid structure
+    FmmCallableInstrument delayed = compounded;
+    delayed.compoundedFloats.clear();
+    for (Size c = 4; c <= 16; c += 4)
+        delayed.compoundedFloats.push_back({c - 4, c, c + 1, 1.0, 0.0});
+    delayed.compoundedFloats.push_back({16, 20, 20, 1.0, 0.0});
+    FmmLsmPricer pd(bed.model, delayed, cfg);
+    const auto rd = pd.calculate();
+    BOOST_CHECK_MESSAGE(std::fabs(rd.underlyingValue - rq.underlyingValue) > 1e-6,
+                        "payment delay must change the underlying value");
+    BOOST_TEST_MESSAGE("with a one-period payment delay: underlying " << rd.underlyingValue << ", lsm " << rd.lowerBound);
+}
+
+BOOST_AUTO_TEST_CASE(testFmmAnalyticSwaptionEngineVsApprox) {
+    BOOST_TEST_MESSAGE("A5.1: FmmAnalyticSwaptionEngine on a QuantLib Swaption reproduces fmmSwaptionApprox on the "
+                       "grid-mapped spec (replication bed, real dates) and stays within 0.01 bp of the LGM "
+                       "analytic engine...");
+    ReplicationBed rb;
+    auto index = QuantLib::ext::make_shared<IborIndex>("FMMTEST", Period(3, Months), 0, EURCurrency(), NullCalendar(),
+                                                       Unadjusted, false, rb.dc, rb.curve);
+    // grid from the contractual dates of the 1y-into-4y swap: must coincide with the bed's quarterly grid
+    const Date expiry = rb.quarterly[4];
+    const Schedule fixedSched(expiry, rb.end, Period(1, Years), NullCalendar(), Unadjusted, Unadjusted,
+                              DateGeneration::Forward, false);
+    const Schedule floatSched(expiry, rb.end, Period(3, Months), NullCalendar(), Unadjusted, Unadjusted,
+                              DateGeneration::Forward, false);
+    std::set<Date> dates(floatSched.dates().begin(), floatSched.dates().end());
+    dates.insert(fixedSched.dates().begin(), fixedSched.dates().end());
+    auto grid = QuantLib::ext::make_shared<FmmGrid>(rb.asof, dates, Period(3, Months));
+    BOOST_REQUIRE_EQUAL(grid->numberOfRates(), rb.M);
+    for (Size k = 0; k <= rb.M; ++k)
+        BOOST_CHECK_SMALL(grid->times()[k] - rb.fmmParam->rateTime(k), 1e-14);
+
+    auto swapEngine = QuantLib::ext::make_shared<DiscountingSwapEngine>(rb.curve);
+    VanillaSwap probe(VanillaSwap::Payer, 1.0, fixedSched, 0.03, rb.dc, floatSched, index, 0.0, rb.dc);
+    probe.setPricingEngine(swapEngine);
+    const Real K = probe.fairRate() + 0.005;
+    auto underlying = QuantLib::ext::make_shared<VanillaSwap>(VanillaSwap::Payer, 2.5, fixedSched, K, rb.dc, floatSched,
+                                                              index, 0.0, rb.dc);
+    auto swaption = QuantLib::ext::make_shared<Swaption>(underlying, QuantLib::ext::make_shared<EuropeanExercise>(expiry));
+    swaption->setPricingEngine(QuantLib::ext::make_shared<FmmAnalyticSwaptionEngine>(
+        rb.fmmParam, grid, FmmSwaptionApproxMethod::EffectiveShift, 3));
+    const Real engineNpv = swaption->NPV();
+    FmmSwapSpec spec;
+    spec.a = 4;
+    spec.b = rb.M;
+    for (Size c = 8; c <= rb.M; c += 4) {
+        spec.fixedPayIndices.push_back(c);
+        spec.fixedAccruals.push_back(rb.fmmParam->rateTime(c) - rb.fmmParam->rateTime(c - 4));
+    }
+    const auto direct = fmmSwaptionApprox(*rb.fmmParam, spec, K, Option::Call, FmmSwaptionApproxMethod::EffectiveShift);
+    BOOST_TEST_MESSAGE("engine " << engineNpv << " vs direct " << 2.5 * direct.price << "; normal vol "
+                                 << swaption->result<Real>("fmmNormalVol") * 1e4 << " bp, effective shift "
+                                 << swaption->result<Real>("fmmEffectiveShift") << ", grid mismatch days "
+                                 << swaption->result<Real>("fmmGridMaxDateMismatchDays"));
+    BOOST_CHECK_SMALL(engineNpv - 2.5 * direct.price, 1e-14);
+    BOOST_CHECK_EQUAL(swaption->result<Real>("fmmGridMaxDateMismatchDays"), 0.0);
+    auto lgmSwaption = QuantLib::ext::make_shared<Swaption>(underlying, QuantLib::ext::make_shared<EuropeanExercise>(expiry));
+    lgmSwaption->setPricingEngine(QuantLib::ext::make_shared<AnalyticLgmSwaptionEngine>(rb.lgmParam, rb.curve));
+    const Real A0 = 2.5 * fmmAnnuity(*rb.fmmParam, spec), S0 = fmmForwardSwapRate(*rb.fmmParam, spec);
+    const Real lgmVol = bachelierBlackFormulaImpliedVol(Option::Call, K, S0, rb.fmmParam->rateTime(4), lgmSwaption->NPV() / A0);
+    BOOST_TEST_MESSAGE("vs LGM analytic: " << (direct.normalVol - lgmVol) * 1e4 << " bp at K = ATM + 50 bp");
+    BOOST_CHECK_SMALL((direct.normalVol - lgmVol) * 1e4, 0.5);
+    // a receiver at a strike below the effective-shift domain must be rejected, not clipped
+    auto deep = QuantLib::ext::make_shared<VanillaSwap>(VanillaSwap::Receiver, 1.0, fixedSched, -5.0, rb.dc, floatSched,
+                                                        index, 0.0, rb.dc);
+    auto deepSwaption = QuantLib::ext::make_shared<Swaption>(deep, QuantLib::ext::make_shared<EuropeanExercise>(expiry));
+    deepSwaption->setPricingEngine(QuantLib::ext::make_shared<FmmAnalyticSwaptionEngine>(
+        rb.fmmParam, grid, FmmSwaptionApproxMethod::EffectiveShift, 3));
+    BOOST_CHECK_THROW(deepSwaption->NPV(), QuantLib::Error);
+}
+
+BOOST_AUTO_TEST_CASE(testFmmLsmMultiLegOptionEngineVsDirect) {
+    BOOST_TEST_MESSAGE("A5.1: FmmLsmMultiLegOptionEngine on an ORE MultiLegOption (fixed vs compounded-RFR legs, "
+                       "Bermudan exercise) reproduces the direct FmmLsmPricer construction on the same grid and "
+                       "seeds; the underlying-only instrument returns the curve value...");
+    ReplicationBed rb;
+    const auto& p = *rb.fmmParam;
+    auto index = QuantLib::ext::make_shared<IborIndex>("FMMTEST", Period(3, Months), 0, EURCurrency(), NullCalendar(),
+                                                       Unadjusted, false, rb.dc, rb.curve);
+    auto onIndex = QuantLib::ext::make_shared<OvernightIndex>("FMMON", 0, EURCurrency(), NullCalendar(), rb.dc, rb.curve);
+    const Schedule fixedSched(rb.asof, rb.end, Period(1, Years), NullCalendar(), Unadjusted, Unadjusted,
+                              DateGeneration::Forward, false);
+    const Schedule floatSched(rb.asof, rb.end, Period(3, Months), NullCalendar(), Unadjusted, Unadjusted,
+                              DateGeneration::Forward, false);
+    VanillaSwap probe(VanillaSwap::Payer, 1.0, fixedSched, 0.03, rb.dc, floatSched, index, 0.0, rb.dc);
+    probe.setPricingEngine(QuantLib::ext::make_shared<DiscountingSwapEngine>(rb.curve));
+    const Real K = probe.fairRate();
+    Leg fixedLeg = FixedRateLeg(fixedSched).withNotionals(1.0).withCouponRates(K, rb.dc);
+    Leg floatLeg = OvernightLeg(floatSched, onIndex).withNotionals(1.0);
+    std::vector<Date> exDates = {rb.quarterly[4], rb.quarterly[8], rb.quarterly[12], rb.quarterly[16]};
+    auto option = QuantLib::ext::make_shared<MultiLegOption>(std::vector<Leg>{fixedLeg, floatLeg},
+                                                             std::vector<bool>{true, false},
+                                                             std::vector<Currency>{EURCurrency(), EURCurrency()},
+                                                             QuantLib::ext::make_shared<BermudanExercise>(exDates));
+    std::set<Date> dates(floatSched.dates().begin(), floatSched.dates().end());
+    dates.insert(fixedSched.dates().begin(), fixedSched.dates().end());
+    auto grid = QuantLib::ext::make_shared<FmmGrid>(rb.asof, dates, Period(3, Months));
+    BOOST_REQUIRE_EQUAL(grid->numberOfRates(), rb.M);
+    FmmLsmEngineConfig cfg;
+    cfg.lsm.trainingPaths = 16384;
+    cfg.lsm.valuationPaths = 16384;
+    cfg.dualBound = true;
+    cfg.dualOuterPaths = 256;
+    cfg.dualInnerPaths = 32;
+    option->setPricingEngine(QuantLib::ext::make_shared<FmmLsmMultiLegOptionEngine>(rb.fmmModel, grid, cfg));
+    const Real engineNpv = option->NPV();
+
+    // direct construction (A4.2 style): quarterly floats are pathwise identical to the compounded ones
+    FmmCallableInstrument inst;
+    inst.style = FmmCallableInstrument::Style::Enter;
+    fillPayerSwapFlows(inst, p, 0, rb.M, K);
+    for (const Size a : {4, 8, 12, 16})
+        inst.rights.push_back({a, a, 0.0});
+    FmmLsmPricer direct(rb.fmmModel, inst, cfg.lsm);
+    const auto res = direct.calculate();
+    BOOST_TEST_MESSAGE("engine " << engineNpv << " vs direct " << res.lowerBound << " (diff " << engineNpv - res.lowerBound
+                                 << "); exercise probs " << option->result<Real>("fmmNoExerciseProbability") << " never, gap "
+                                 << option->result<Real>("fmmDualityGap") << " +/- "
+                                 << option->result<Real>("fmmDualityGapStdError") << ", underlying "
+                                 << option->underlyingNpv());
+    BOOST_CHECK_SMALL(engineNpv - res.lowerBound, 1e-11);
+    BOOST_CHECK_SMALL(option->result<Real>("fmmLsmLowerBoundStdError") - res.lowerBoundSe, 1e-12);
+    // the underlying is struck at the fair rate: its curve value is zero
+    BOOST_CHECK_SMALL(option->underlyingNpv(), 1e-12);
+    BOOST_CHECK(option->result<Real>("fmmDualityGap") > -3.0 * option->result<Real>("fmmDualityGapStdError"));
+
+    // without exercise the instrument is the swap itself
+    auto swapOnly = QuantLib::ext::make_shared<MultiLegOption>(std::vector<Leg>{fixedLeg, floatLeg},
+                                                               std::vector<bool>{true, false},
+                                                               std::vector<Currency>{EURCurrency(), EURCurrency()});
+    swapOnly->setPricingEngine(QuantLib::ext::make_shared<FmmLsmMultiLegOptionEngine>(rb.fmmModel, grid, cfg));
+    BOOST_CHECK_SMALL(swapOnly->NPV(), 1e-12);
+    // and an off-market swap reproduces the discounting engine's value
+    Leg fixedLegOff = FixedRateLeg(fixedSched).withNotionals(1.0).withCouponRates(K + 0.01, rb.dc);
+    auto swapOff = QuantLib::ext::make_shared<MultiLegOption>(std::vector<Leg>{fixedLegOff, floatLeg},
+                                                              std::vector<bool>{true, false},
+                                                              std::vector<Currency>{EURCurrency(), EURCurrency()});
+    swapOff->setPricingEngine(QuantLib::ext::make_shared<FmmLsmMultiLegOptionEngine>(rb.fmmModel, grid, cfg));
+    VanillaSwap offMarket(VanillaSwap::Payer, 1.0, fixedSched, K + 0.01, rb.dc, floatSched, index, 0.0, rb.dc);
+    offMarket.setPricingEngine(QuantLib::ext::make_shared<DiscountingSwapEngine>(rb.curve));
+    BOOST_TEST_MESSAGE("off-market swap: fmm curve value " << swapOff->NPV() << " vs discounting engine " << offMarket.NPV());
+    BOOST_CHECK_SMALL(swapOff->NPV() - offMarket.NPV(), 1e-12);
+}
+
+BOOST_AUTO_TEST_CASE(testFmmLsmCallableBondEngineVsDirect) {
+    BOOST_TEST_MESSAGE("A5.1: FmmLsmCallableBondEngine on an ORE CallableBond reproduces the direct issuer-side "
+                       "construction (holder NPV = -issuer value, control-variate) and stays within the A4 "
+                       "tolerance of ORE's NumericLgmCallableBondEngine...");
+    ReplicationBed rb;
+    const auto& p = *rb.fmmParam;
+    const Real coupon = 0.031;
+    const Schedule annual(rb.asof, rb.end, Period(1, Years), NullCalendar(), Unadjusted, Unadjusted,
+                          DateGeneration::Forward, false);
+    const Leg coupons = FixedRateLeg(annual).withNotionals(1.0).withCouponRates(coupon, rb.dc);
+    std::vector<CallableBond::CallabilityData> calls;
+    for (Size y = 1; y <= 4; ++y)
+        calls.push_back({annual[y], CallableBond::CallabilityData::ExerciseType::OnThisDate, 1.0,
+                         CallableBond::CallabilityData::PriceType::Dirty, true});
+    auto bond = QuantLib::ext::make_shared<CallableBond>(0, NullCalendar(), rb.asof, coupons, calls);
+    std::set<Date> dates(annual.dates().begin(), annual.dates().end());
+    auto grid = QuantLib::ext::make_shared<FmmGrid>(rb.asof, dates, Period(3, Months));
+    BOOST_REQUIRE_EQUAL(grid->numberOfRates(), rb.M);
+    FmmLsmEngineConfig cfg;
+    cfg.lsm.trainingPaths = 32768;
+    cfg.lsm.valuationPaths = 32768;
+    auto spreadQuote = QuantLib::ext::make_shared<SimpleQuote>(0.0);
+    bond->setPricingEngine(QuantLib::ext::make_shared<FmmLsmCallableBondEngine>(rb.fmmModel, grid, cfg, rb.curve,
+                                                                                Handle<Quote>(spreadQuote)));
+    const Real engineNpv = bond->NPV();
+
+    FmmCallableInstrument inst;
+    inst.style = FmmCallableInstrument::Style::Cancel;
+    inst.lastFlowIdx = rb.M;
+    inst.fixedFlows.assign(rb.M + 1, 0.0);
+    inst.floatWeights.assign(rb.M + 1, 0.0);
+    for (Size c = 4; c <= rb.M; c += 4)
+        inst.fixedFlows[c] -= coupon * (p.rateTime(c) - p.rateTime(c - 4));
+    inst.fixedFlows[rb.M] -= 1.0;
+    for (const Size a : {4, 8, 12, 16})
+        inst.rights.push_back({a, a, -1.0});
+    FmmLsmPricer direct(rb.fmmModel, inst, cfg.lsm);
+    const auto res = direct.calculate();
+    BOOST_TEST_MESSAGE("engine (holder) " << engineNpv << " vs direct -(issuer cv) " << -res.lowerBoundCv << "; stripped "
+                                          << bond->result<Real>("strippedBondNpv") << ", call value "
+                                          << bond->result<Real>("callPutValue"));
+    BOOST_CHECK_SMALL(engineNpv + res.lowerBoundCv, 1e-11);
+    BOOST_CHECK_SMALL(bond->result<Real>("strippedBondNpv") + res.underlyingValue, 1e-12);
+
+    auto oreBond = QuantLib::ext::make_shared<CallableBond>(0, NullCalendar(), rb.asof, coupons, calls);
+    oreBond->setPricingEngine(QuantLib::ext::make_shared<NumericLgmCallableBondEngine>(
+        Handle<LGM>(rb.lgmModel), 50.0, FdmSchemeDesc::Douglas(), 256, 48, 1e-4, 24, rb.curve));
+    const Real oreCall = oreBond->result<Real>("callPutValue");
+    const Real fmmCall = bond->result<Real>("callPutValue");
+    BOOST_TEST_MESSAGE("embedded call: FMM engine " << fmmCall << " +/- " << bond->result<Real>("fmmLsmLowerBoundStdError")
+                                                    << " vs ORE FD " << oreCall << " (diff " << fmmCall - oreCall << ")");
+    BOOST_CHECK_MESSAGE(std::fabs(fmmCall - oreCall) < 3.0 * bond->result<Real>("fmmLsmLowerBoundStdError"),
+                        "FMM engine call value vs ORE beyond 3 s.e.: " << fmmCall - oreCall);
+    // with a 50 bp issuer spread the straight bond must agree with ORE's discounting-spread value
+    spreadQuote->setValue(0.005);
+    const Real npvSpread = bond->NPV();
+    auto oreSpread = QuantLib::ext::make_shared<CallableBond>(0, NullCalendar(), rb.asof, coupons, calls);
+    oreSpread->setPricingEngine(QuantLib::ext::make_shared<NumericLgmCallableBondEngine>(
+        Handle<LGM>(rb.lgmModel), 50.0, FdmSchemeDesc::Douglas(), 256, 48, 1e-4, 24, rb.curve,
+        Handle<Quote>(QuantLib::ext::make_shared<SimpleQuote>(0.005))));
+    BOOST_TEST_MESSAGE("50 bp spread: FMM " << npvSpread << " (straight " << bond->result<Real>("strippedBondNpv")
+                                            << ") vs ORE " << oreSpread->NPV() << " (straight "
+                                            << oreSpread->result<Real>("strippedBondNpv") << ")");
+    BOOST_CHECK_SMALL(bond->result<Real>("strippedBondNpv") - oreSpread->result<Real>("strippedBondNpv"), 5e-5);
+    BOOST_CHECK_MESSAGE(std::fabs(npvSpread - oreSpread->NPV()) < 3.0 * bond->result<Real>("fmmLsmLowerBoundStdError"),
+                        "FMM engine with spread vs ORE beyond 3 s.e.: " << npvSpread - oreSpread->NPV());
 }
 
 BOOST_AUTO_TEST_CASE(testShiftAdmissibilityGuard) {

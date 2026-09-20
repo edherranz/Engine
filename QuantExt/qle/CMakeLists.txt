@@ -1,4 +1,4 @@
-# cpp files, this list is maintained manually
+﻿# cpp files, this list is maintained manually
 
 set(QuantExt_SRC ad/computationgraph.cpp
 ad/external_randomvariable_ops.cpp
@@ -228,6 +228,8 @@ models/fmmcalibration.cpp
 models/fmmlsmpricer.cpp
 models/fmmparametrization.cpp
 models/forwardmarketmodel.cpp
+models/fmmgrid.cpp
+models/fmmirmodel.cpp
 models/futureoptionhelper.cpp
 models/fxbsconstantparametrization.cpp
 models/fxbsparametrization.cpp
@@ -328,6 +330,9 @@ pricingengines/fxdigitalcallspreadengine.cpp
 pricingengines/fdcallablebondevents.cpp
 pricingengines/fdconvertiblebondevents.cpp
 pricingengines/fddefaultableequityjumpdiffusionconvertiblebondengine.cpp
+pricingengines/fmmanalyticswaptionengine.cpp
+pricingengines/fmmlsmcallablebondengine.cpp
+pricingengines/fmmlsmmultilegoptionengine.cpp
 pricingengines/forwardenabledbondengine.cpp
 pricingengines/forwardriskyannuitystrike.cpp
 pricingengines/indexcdsoptionbaseengine.cpp
@@ -820,6 +825,8 @@ models/fmmcalibration.hpp
 models/fmmlsmpricer.hpp
 models/fmmparametrization.hpp
 models/forwardmarketmodel.hpp
+models/fmmgrid.hpp
+models/fmmirmodel.hpp
 models/futureoptionhelper.hpp
 models/fxbsconstantparametrization.hpp
 models/fxbsmodel.hpp
@@ -943,6 +950,9 @@ pricingengines/fdblackscholesvanillaengine.hpp
 pricingengines/fdcallablebondevents.hpp
 pricingengines/fdconvertiblebondevents.hpp
 pricingengines/fddefaultableequityjumpdiffusionconvertiblebondengine.hpp
+pricingengines/fmmanalyticswaptionengine.hpp
+pricingengines/fmmlsmcallablebondengine.hpp
+pricingengines/fmmlsmmultilegoptionengine.hpp
 pricingengines/forwardenabledbondengine.hpp
 pricingengines/forwardriskyannuitystrike.hpp
 pricingengines/indexcdsoptionbaseengine.hpp

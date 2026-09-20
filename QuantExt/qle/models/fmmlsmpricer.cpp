@@ -31,6 +31,10 @@ void FmmCallableInstrument::validate(const Size M) const {
     QL_REQUIRE(lastFlowIdx >= 1 && lastFlowIdx <= M, "FmmCallableInstrument: lastFlowIdx out of range");
     QL_REQUIRE(fixedFlows.size() == M + 1 && floatWeights.size() == M + 1,
                "FmmCallableInstrument: flow vectors must have size M+1");
+    for (const auto& f : compoundedFloats)
+        QL_REQUIRE(f.startIdx < f.endIdx && f.endIdx <= f.payIdx && f.payIdx <= lastFlowIdx,
+                   "FmmCallableInstrument: compounded coupon indices (" << f.startIdx << ", " << f.endIdx << "] paid at "
+                                                                        << f.payIdx << " are invalid");
     QL_REQUIRE(!rights.empty(), "FmmCallableInstrument: no exercise rights");
     for (Size r = 0; r < rights.size(); ++r) {
         QL_REQUIRE(rights[r].noticeIdx >= 1 && rights[r].noticeIdx < lastFlowIdx,
@@ -48,15 +52,39 @@ FmmLsmPricer::FmmLsmPricer(const QuantLib::ext::shared_ptr<ForwardMarketModel>& 
     QL_REQUIRE(model_, "FmmLsmPricer: model is null");
     instrument_.validate(M_);
     QL_REQUIRE(config_.basisOrder == 1 || config_.basisOrder == 2, "FmmLsmPricer: basisOrder must be 1 or 2");
-    if (instrument_.style == FmmCallableInstrument::Style::Cancel) {
-        const auto& p = *model_->parametrization();
-        for (Size j = 1; j <= instrument_.lastFlowIdx; ++j) {
-            const Real pj = p.termStructure()->discount(p.rateTime(j));
-            const Real pjm = p.termStructure()->discount(p.rateTime(j - 1));
-            underlyingCurve_ += (instrument_.fixedFlows[j] * pj + instrument_.floatWeights[j] * (pjm - pj)) *
-                                spreadDf(p.rateTime(j));
-        }
+    if (instrument_.style == FmmCallableInstrument::Style::Cancel)
+        underlyingCurve_ = fmmUnderlyingCurveValue(instrument_, *model_->parametrization());
+}
+
+Real fmmUnderlyingCurveValue(const FmmCallableInstrument& inst, const FmmParametrization& p) {
+    const YieldTermStructure& ts = **p.termStructure();
+    auto sdf = [&](const Time T) { return std::exp(-inst.issuerSpread * T); };
+    Real u = 0.0;
+    for (Size j = 1; j <= inst.lastFlowIdx; ++j) {
+        const Real pj = ts.discount(p.rateTime(j));
+        const Real pjm = ts.discount(p.rateTime(j - 1));
+        u += (inst.fixedFlows[j] * pj + inst.floatWeights[j] * (pjm - pj)) * sdf(p.rateTime(j));
     }
+    for (const auto& f : inst.compoundedFloats) {
+        const Real ps = ts.discount(p.rateTime(f.startIdx)), pe = ts.discount(p.rateTime(f.endIdx)),
+                   pp = ts.discount(p.rateTime(f.payIdx));
+        u += (f.weight * (ps / pe - 1.0) + f.spreadAmount) * pp * sdf(p.rateTime(f.payIdx));
+    }
+    return u;
+}
+
+Real FmmLsmPricer::realizedFlow(const Size j, const ForwardMarketModel::State& st) const {
+    const auto& p = *model_->parametrization();
+    Real flow = instrument_.fixedFlows[j] + instrument_.floatWeights[j] * p.tau(j) * st.R[j - 1];
+    for (const auto& f : instrument_.compoundedFloats) {
+        if (f.payIdx != j)
+            continue;
+        Real acc = 1.0;
+        for (Size k = f.startIdx + 1; k <= f.endIdx; ++k)
+            acc *= 1.0 + p.tau(k) * st.R[k - 1];
+        flow += f.weight * (acc - 1.0) + f.spreadAmount;
+    }
+    return flow;
 }
 
 Array FmmLsmPricer::basis(const Array& x) const {
@@ -82,8 +110,8 @@ Array FmmLsmPricer::basis(const Array& x) const {
     return b;
 }
 
-Real FmmLsmPricer::markDeflated(const ForwardMarketModel::State& st, const Size from, const Size to,
-                                const Real bank) const {
+Real FmmLsmPricer::markDeflated(const ForwardMarketModel::State& st, const Size atIdx, const Size from,
+                                const Size to, const Real bank) const {
     // time-0 deflated conditional expectation of the flows: E_t[flow_j / B(T_j)] = flow_j P(t,T_j) / B(t),
     // times the deterministic issuer-spread factor to T_j - the same units as the realized
     // deflated flows (a time-t-relative spread factor here would be inconsistent with them)
@@ -94,6 +122,21 @@ Real FmmLsmPricer::markDeflated(const ForwardMarketModel::State& st, const Size 
         const Real pjm = model_->discountBond(st, p.rateTime(j - 1));
         mark += (instrument_.fixedFlows[j] * pj + instrument_.floatWeights[j] * (pjm - pj)) *
                 spreadDf(p.rateTime(j));
+    }
+    for (const auto& f : instrument_.compoundedFloats) {
+        if (f.payIdx <= from || f.payIdx > to)
+            continue;
+        // periods up to T_atIdx are fixed, the remainder is the forward bond ratio
+        Real fixedFactor = 1.0;
+        Size m = f.startIdx;
+        for (Size k = f.startIdx + 1; k <= std::min(f.endIdx, atIdx); ++k) {
+            fixedFactor *= 1.0 + p.tau(k) * st.R[k - 1];
+            m = k;
+        }
+        const Real fwdFactor =
+            m < f.endIdx ? model_->discountBond(st, p.rateTime(m)) / model_->discountBond(st, p.rateTime(f.endIdx)) : 1.0;
+        const Real pp = model_->discountBond(st, p.rateTime(f.payIdx));
+        mark += (f.weight * (fixedFactor * fwdFactor - 1.0) + f.spreadAmount) * pp * spreadDf(p.rateTime(f.payIdx));
     }
     return mark / bank;
 }
@@ -116,7 +159,7 @@ Array FmmLsmPricer::regressorsAt(const ForwardMarketModel::State& st, const Size
     const Real pEnd = model_->discountBond(st, p.rateTime(last));
     for (Size j = rt.noticeIdx + 1; j <= last; ++j)
         annuity += p.tau(j) * model_->discountBond(st, p.rateTime(j));
-    const Real mark = markDeflated(st, rt.settleIdx, last, bank);
+    const Real mark = markDeflated(st, rt.noticeIdx, rt.settleIdx, last, bank);
     const Real fee = feeDeflated(st, r, bank);
     Array x(3);
     x[0] = annuity > QL_EPSILON ? (1.0 - pEnd) / annuity : 0.0;
@@ -156,8 +199,7 @@ void FmmLsmPricer::simulate(const Size paths, const BigNatural seed, const Seque
         for (Size j = 1; j <= last; ++j) {
             const auto& st = path.states[j - 1];
             bank[j] = model_->bankAccount(st);
-            const Real flow = instrument_.fixedFlows[j] + instrument_.floatWeights[j] * p.tau(j) * st.R[j - 1];
-            d.deflatedFlows[j] = flow / bank[j] * spreadDf(p.rateTime(j));
+            d.deflatedFlows[j] = realizedFlow(j, st) / bank[j] * spreadDf(p.rateTime(j));
             total += d.deflatedFlows[j];
         }
         d.regressors.resize(nRights);
@@ -384,8 +426,7 @@ Real FmmLsmPricer::innerPolicyValue(const ForwardMarketModel::State& start, cons
             z[q] = normal();
         model_->evolve(st, steps[j - 1], z);
         const Real bank = model_->bankAccount(st);
-        const Real flow = (instrument_.fixedFlows[j] + instrument_.floatWeights[j] * p.tau(j) * st.R[j - 1]) /
-                          bank * spreadDf(p.rateTime(j));
+        const Real flow = realizedFlow(j, st) / bank * spreadDf(p.rateTime(j));
         if (exercised) {
             if (j > settleIdx)
                 switched += flow;
@@ -446,9 +487,7 @@ FmmDualBoundResult FmmLsmPricer::dualBound(const Size outerPaths, const Size inn
         o.prefix.assign(last + 1, 0.0);
         for (Size j = 1; j <= last; ++j) {
             o.bank[j] = model_->bankAccount(o.states[j - 1]);
-            const Real flow =
-                (instrument_.fixedFlows[j] + instrument_.floatWeights[j] * p.tau(j) * o.states[j - 1].R[j - 1]) /
-                o.bank[j] * spreadDf(p.rateTime(j));
+            const Real flow = realizedFlow(j, o.states[j - 1]) / o.bank[j] * spreadDf(p.rateTime(j));
             o.prefix[j] = o.prefix[j - 1] + flow;
         }
         // frozen-policy value along the outer path (lower-bound sample)
@@ -490,7 +529,7 @@ FmmDualBoundResult FmmLsmPricer::dualBound(const Size outerPaths, const Size inn
             // notice and settlement and the fee marked on the notice-date curve. Realized post-
             // notice flows would leak information and invalidate the dual bound.
             const Real h = enter ? x[2]
-                                 : o.prefix[rt.noticeIdx] + markDeflated(st, rt.noticeIdx, rt.settleIdx, bank) +
+                                 : o.prefix[rt.noticeIdx] + markDeflated(st, rt.noticeIdx, rt.noticeIdx, rt.settleIdx, bank) +
                                        feeDeflated(st, r, bank);
             // continuation under the policy from the next right: nested inner simulation
             if (enter && r + 1 == nRights) {

@@ -327,6 +327,11 @@
 #include <qle/models/eqbspiecewiseconstantparametrization.hpp>
 #include <qle/models/exactbachelierimpliedvolatility.hpp>
 #include <qle/models/extendedconstantlosslatentmodel.hpp>
+#include <qle/models/fmmanalytics.hpp>
+#include <qle/models/fmmcalibration.hpp>
+#include <qle/models/fmmgrid.hpp>
+#include <qle/models/fmmirmodel.hpp>
+#include <qle/models/fmmlsmpricer.hpp>
 #include <qle/models/fmmparametrization.hpp>
 #include <qle/models/forwardmarketmodel.hpp>
 #include <qle/models/futureoptionhelper.hpp>
@@ -452,6 +457,9 @@
 #include <qle/pricingengines/fdcallablebondevents.hpp>
 #include <qle/pricingengines/fdconvertiblebondevents.hpp>
 #include <qle/pricingengines/fddefaultableequityjumpdiffusionconvertiblebondengine.hpp>
+#include <qle/pricingengines/fmmanalyticswaptionengine.hpp>
+#include <qle/pricingengines/fmmlsmcallablebondengine.hpp>
+#include <qle/pricingengines/fmmlsmmultilegoptionengine.hpp>
 #include <qle/pricingengines/forwardenabledbondengine.hpp>
 #include <qle/pricingengines/forwardriskyannuitystrike.hpp>
 #include <qle/pricingengines/fxdigitalcallspreadengine.hpp>
