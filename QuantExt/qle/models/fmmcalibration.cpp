@@ -17,6 +17,7 @@
 */
 
 #include <qle/models/fmmcalibration.hpp>
+#include <qle/models/forwardmarketmodel.hpp>
 
 #include <ql/math/comparison.hpp>
 #include <ql/math/solvers1d/brent.hpp>
@@ -25,6 +26,22 @@
 #include <sstream>
 
 namespace QuantExt {
+
+namespace {
+Real capletForward(const FmmParametrization& p, const FmmCapletVolTarget& t) {
+    return (p.termStructure()->discount(p.rateTime(t.bucket - 1)) / p.termStructure()->discount(p.rateTime(t.bucket)) -
+            1.0) /
+           p.tau(t.bucket);
+}
+Real modelSwaptionVol(const FmmParametrization& p, const FmmSwaptionVolTarget& t,
+                      const FmmSwaptionApproxMethod method) {
+    return fmmSwaptionApprox(p, t.swap, fmmTargetStrike(p, t), Option::Call, method).normalVol;
+}
+} // namespace
+
+Real fmmTargetStrike(const FmmParametrization& p, const FmmSwaptionVolTarget& t) {
+    return t.strike == Null<Real>() ? fmmForwardSwapRate(p, t.swap) : t.strike;
+}
 
 void FmmSeparableVols::apply(FmmParametrization& p) const {
     QL_REQUIRE(levels.size() == p.numberOfRates(), "FmmSeparableVols: levels size mismatch");
@@ -69,10 +86,7 @@ void fmmCapletLevelBootstrap(FmmParametrization& p, FmmSeparableVols& v,
                    "fmmCapletLevelBootstrap: bucket " << t.bucket << " out of range");
         QL_REQUIRE(!covered[t.bucket - 1], "fmmCapletLevelBootstrap: duplicate bucket " << t.bucket);
         covered[t.bucket - 1] = true;
-        const Real F0 = (p.termStructure()->discount(p.rateTime(t.bucket - 1)) /
-                             p.termStructure()->discount(p.rateTime(t.bucket)) -
-                         1.0) /
-                        p.tau(t.bucket);
+        const Real F0 = capletForward(p, t);
         Brent solver;
         v.levels[t.bucket - 1] = solver.solve(
             [&](const Real level) {
@@ -101,7 +115,8 @@ void fmmCapletLevelBootstrap(FmmParametrization& p, FmmSeparableVols& v,
 }
 
 void fmmSwaptionTimeDependenceBootstrap(FmmParametrization& p, FmmSeparableVols& v,
-                                        const std::vector<FmmSwaptionVolTarget>& targets) {
+                                        const std::vector<FmmSwaptionVolTarget>& targets,
+                                        const FmmSwaptionApproxMethod method) {
     QL_REQUIRE(!targets.empty(), "fmmSwaptionTimeDependenceBootstrap: no targets");
     for (Size k = 1; k < targets.size(); ++k)
         QL_REQUIRE(targets[k].swap.a > targets[k - 1].swap.a,
@@ -121,10 +136,7 @@ void fmmSwaptionTimeDependenceBootstrap(FmmParametrization& p, FmmSeparableVols&
             [&](const Real ak) {
                 v.a[k] = ak;
                 v.apply(p);
-                return fmmSwaptionApprox(p, targets[k].swap,
-                                         fmmForwardSwapRate(p, targets[k].swap))
-                           .normalVol -
-                       targets[k].normalVol;
+                return modelSwaptionVol(p, targets[k], method) - targets[k].normalVol;
             },
             1e-12, std::max(v.a[k], 0.1), 1e-8, 100.0);
     }
@@ -135,43 +147,34 @@ void fmmSwaptionTimeDependenceBootstrap(FmmParametrization& p, FmmSeparableVols&
 FmmCalibrationReport fmmJointBootstrap(FmmParametrization& p, FmmSeparableVols& v,
                                        const std::vector<FmmCapletVolTarget>& capletTargets,
                                        const std::vector<FmmSwaptionVolTarget>& swaptionTargets,
-                                       const Size maxIterations, const Real tolBp) {
+                                       const Size maxIterations, const Real tolBp,
+                                       const FmmSwaptionApproxMethod method) {
     const auto start = std::chrono::steady_clock::now();
     FmmCalibrationReport report;
     for (Size it = 0; it < maxIterations; ++it) {
         report.iterations = it + 1;
         fmmCapletLevelBootstrap(p, v, capletTargets);
-        fmmSwaptionTimeDependenceBootstrap(p, v, swaptionTargets);
+        fmmSwaptionTimeDependenceBootstrap(p, v, swaptionTargets, method);
         // convergence: all targets repriced within tolerance
         Real worst = 0.0;
-        for (const auto& t : capletTargets) {
-            const Real F0 = (p.termStructure()->discount(p.rateTime(t.bucket - 1)) /
-                                 p.termStructure()->discount(p.rateTime(t.bucket)) -
-                             1.0) /
-                            p.tau(t.bucket);
-            worst = std::max(worst,
-                             std::fabs(fmmCapletNormalVol(p, t.bucket, F0, t.backwardLooking) - t.normalVol) * 1e4);
-        }
+        for (const auto& t : capletTargets)
+            worst = std::max(worst, std::fabs(fmmCapletNormalVol(p, t.bucket, capletForward(p, t), t.backwardLooking) -
+                                              t.normalVol) *
+                                        1e4);
         for (const auto& t : swaptionTargets)
-            worst = std::max(
-                worst,
-                std::fabs(fmmSwaptionApprox(p, t.swap, fmmForwardSwapRate(p, t.swap)).normalVol - t.normalVol) * 1e4);
+            worst = std::max(worst, std::fabs(modelSwaptionVol(p, t, method) - t.normalVol) * 1e4);
         if (worst < tolBp) {
             report.converged = true;
             break;
         }
     }
     for (const auto& t : capletTargets) {
-        const Real F0 = (p.termStructure()->discount(p.rateTime(t.bucket - 1)) /
-                             p.termStructure()->discount(p.rateTime(t.bucket)) -
-                         1.0) /
-                        p.tau(t.bucket);
         FmmCalibrationReport::Row row;
         std::ostringstream lbl;
         lbl << "caplet_" << t.bucket << (t.backwardLooking ? "_bwd" : "_fwd");
         row.instrument = lbl.str();
         row.marketVol = t.normalVol;
-        row.modelVol = fmmCapletNormalVol(p, t.bucket, F0, t.backwardLooking);
+        row.modelVol = fmmCapletNormalVol(p, t.bucket, capletForward(p, t), t.backwardLooking);
         row.errorBp = (row.modelVol - row.marketVol) * 1e4;
         report.rows.push_back(row);
     }
@@ -179,13 +182,63 @@ FmmCalibrationReport fmmJointBootstrap(FmmParametrization& p, FmmSeparableVols& 
         FmmCalibrationReport::Row row;
         row.instrument = t.label.empty() ? "swaption" : t.label;
         row.marketVol = t.normalVol;
-        row.modelVol = fmmSwaptionApprox(p, t.swap, fmmForwardSwapRate(p, t.swap)).normalVol;
+        row.modelVol = modelSwaptionVol(p, t, method);
         row.errorBp = (row.modelVol - row.marketVol) * 1e4;
         report.rows.push_back(row);
     }
     report.runtimeSeconds =
         std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count() *
         1e-6;
+    return report;
+}
+
+FmmMcCorrectedReport fmmMcCorrectedSwaptionBootstrap(FmmParametrization& p,
+                                                     const QuantLib::ext::shared_ptr<ForwardMarketModel>& model,
+                                                     FmmSeparableVols& v,
+                                                     const std::vector<FmmSwaptionVolTarget>& targets,
+                                                     const FmmSwaptionApproxMethod method, const Size pathsPerRep,
+                                                     const Size reps, const BigNatural seed,
+                                                     const Size maxIterations, const Real tolBp) {
+    const auto start = std::chrono::steady_clock::now();
+    QL_REQUIRE(model && model->parametrization().get() == &p,
+               "fmmMcCorrectedSwaptionBootstrap: the model must wrap the parametrization being calibrated");
+    QL_REQUIRE(!targets.empty(), "fmmMcCorrectedSwaptionBootstrap: no targets");
+    FmmMcCorrectedReport report;
+    std::vector<FmmSwaptionVolTarget> adjusted = targets;
+    for (Size it = 0; it < maxIterations; ++it) {
+        report.iterations = it + 1;
+        fmmSwaptionTimeDependenceBootstrap(p, v, adjusted, method);
+        // same-model Monte Carlo reprice of every market target at its strike (one batch per
+        // target: coterminal targets have distinct expiries)
+        report.rows.clear();
+        Real worst = 0.0;
+        for (Size k = 0; k < targets.size(); ++k) {
+            const Real K = fmmTargetStrike(p, targets[k]);
+            const auto mc = fmmSwaptionMc(model, {targets[k].swap}, {K}, Option::Call, pathsPerRep, reps,
+                                          seed + 1000 * static_cast<BigNatural>(k))
+                                .front();
+            FmmMcCorrectedReport::Row row;
+            row.instrument = targets[k].label.empty() ? "swaption" : targets[k].label;
+            row.strike = K;
+            row.marketVol = targets[k].normalVol;
+            row.approxVol = modelSwaptionVol(p, targets[k], method);
+            row.mcVol = mc.normalVol;
+            row.mcVolSe = mc.normalVolSe;
+            row.residualBp = (mc.normalVol - targets[k].normalVol) * 1e4;
+            report.rows.push_back(row);
+            worst = std::max(worst, std::fabs(row.residualBp));
+            // control-variate update of the analytic target by the measured bias
+            adjusted[k].normalVol -= (mc.normalVol - targets[k].normalVol);
+        }
+        report.worstResidualBp.push_back(worst);
+        if (worst < tolBp) {
+            report.converged = true;
+            break;
+        }
+    }
+    report.runtimeSeconds =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count() *
+        1e-3;
     return report;
 }
 

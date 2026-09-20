@@ -18,9 +18,11 @@
 
 /*! \file fmmanalytics.hpp
     \brief FMM closed forms: backward/forward caplets under displaced-diffusion or normal
-           dynamics, and the frozen-gradient normal swaption approximation
-           (ore-fmm docs/FMM_SPEC.md sections 7.2-7.4); initial domain per spec section 7.4:
-           physically settled, forward-starting, single-curve swaps on tenor-grid schedules
+           dynamics, the frozen-gradient swaption approximations (strike-flat normal and the
+           strike-aware effective-shift variant, ore-fmm docs/FMM_SPEC.md sections 7.2-7.4), and
+           the same-model Monte Carlo swaption reference with replication-based uncertainty.
+           Initial domain per spec section 7.4: physically settled, forward-starting,
+           single-curve swaps on tenor-grid schedules.
     \ingroup models
 */
 
@@ -30,9 +32,12 @@
 #include <qle/models/fmmparametrization.hpp>
 
 #include <ql/option.hpp>
+#include <ql/utilities/null.hpp>
 
 namespace QuantExt {
 using namespace QuantLib;
+
+class ForwardMarketModel;
 
 //! on-grid swap: float leg pays tau_j R_j at T_j for j in (a, b]; fixed leg pays
 //! fixedAccruals[c] * K at T_{fixedPayIndices[c]}, indices strictly increasing within (a, b]
@@ -43,12 +48,23 @@ struct FmmSwapSpec {
     void validate(const Size M) const;
 };
 
+//! frozen-gradient approximation family (FMM_SPEC.md section 7.4)
+enum class FmmSwaptionApproxMethod {
+    StrikeFlatNormal, //!< local vols frozen at time-0 rates: normal swap rate, strike-independent vol
+    EffectiveShift    //!< local vol projected onto the swap rate: displaced-lognormal swap rate
+};
+
 struct FmmSwaptionApproxResult {
     Real price = 0.0;      //!< option value (unit notional)
-    Real normalVol = 0.0;  //!< implied normal vol of the forward swap rate, annualised over T_a
+    Real normalVol = 0.0;  //!< implied normal vol of the forward swap rate at the strike, annualised over T_a
     Real forward = 0.0;    //!< forward swap rate S(0)
     Real annuity = 0.0;    //!< fixed-leg annuity A(0)
-    Real variance = 0.0;   //!< total normal variance of S at expiry
+    Real variance = 0.0;   //!< normal variance of S at expiry consistent with normalVol
+    FmmSwaptionApproxMethod method = FmmSwaptionApproxMethod::StrikeFlatNormal;
+    //! effective shift delta_S of the displaced-lognormal swap rate (EffectiveShift method);
+    //! Null when the normal limit applies (normal dynamics or a vanishing projected slope)
+    Real effectiveShift = Null<Real>();
+    Real shiftedStdDev = 0.0; //!< total lognormal std dev of S + delta_S over [0, T_a] (EffectiveShift)
 };
 
 //! undiscounted-forward caplet building blocks
@@ -64,11 +80,31 @@ Real fmmCapletNormalVol(const FmmParametrization& p, const Size j, const Real K,
 Real fmmForwardSwapRate(const FmmParametrization& p, const FmmSwapSpec& swap);
 Real fmmAnnuity(const FmmParametrization& p, const FmmSwapSpec& swap);
 
-//! frozen-gradient normal approximation (FMM_SPEC.md section 7.4): dS = sum_i q_i dR_i with the
-//! exact gradient q_i = dS/dR_i at t=0 (weights and weight-derivatives combined), local vols
-//! frozen at time-0 rates, time integrals exact; expiry = T_a
+//! frozen-gradient approximations (FMM_SPEC.md section 7.4): dS = sum_i q_i dR_i with the exact
+//! gradient q_i = dS/dR_i at t=0 (weights and weight-derivatives combined), time integrals
+//! exact, expiry = T_a. StrikeFlatNormal freezes the local vols at time-0 rates (normal swap
+//! rate). EffectiveShift projects the local vol onto the swap rate: with beta_i =
+//! Cov(dR_i, dS)/Var(dS) (integrated covariances) the local variance slope dV/dS at S(0) gives a
+//! displaced-lognormal S with shift delta_S = V(0)/D - S(0), D = sum_ik q_i q_k beta_i phi_k
+//! IC_ik; for a common rate shift and perfectly correlated rates delta_S reduces to that shift,
+//! and normal dynamics are the delta_S -> infinity (normal) limit. Strikes with K + delta_S <= 0
+//! are outside the domain and rejected.
 FmmSwaptionApproxResult fmmSwaptionApprox(const FmmParametrization& p, const FmmSwapSpec& swap, const Real K,
-                                          const Option::Type type = Option::Call);
+                                          const Option::Type type = Option::Call,
+                                          const FmmSwaptionApproxMethod method = FmmSwaptionApproxMethod::StrikeFlatNormal);
+
+//! same-model Monte Carlo reference: physically settled swaptions sharing the expiry T_a
+//! (swaps[i] struck at strikes[i]), randomized Sobol with `reps` independent scrambles of
+//! `pathsPerRep` paths each; uncertainty from the replication means (normal vol: one-sided
+//! implied-vol difference at one price standard error)
+struct FmmSwaptionMcResult {
+    Real price = 0.0, priceSe = 0.0;
+    Real normalVol = 0.0, normalVolSe = 0.0;
+};
+std::vector<FmmSwaptionMcResult> fmmSwaptionMc(const QuantLib::ext::shared_ptr<ForwardMarketModel>& model,
+                                               const std::vector<FmmSwapSpec>& swaps, const std::vector<Real>& strikes,
+                                               const Option::Type type, const Size pathsPerRep, const Size reps,
+                                               const BigNatural seed);
 
 } // namespace QuantExt
 

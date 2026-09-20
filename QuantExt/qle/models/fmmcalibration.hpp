@@ -20,9 +20,11 @@
     \brief FMM calibration in the separable form lambda_j(t) = Lambda_j a(t) with piecewise-
            constant a and the identifiability normalization a(0) = 1 (ore-fmm docs/FMM_SPEC.md
            section 6.1): per-bucket caplet level bootstrap, sequential coterminal-swaption
-           time-dependence bootstrap, and the joint iteration. The OREData builder/report plumbing
-           (model-neutral keys + modelType=FMM + fmm* fields) is the A5 milestone; this layer
-           produces the numbers.
+           time-dependence bootstrap (ATM or deal strikes, strike-flat or effective-shift
+           approximation), the joint iteration, and the MC-corrected swaption bootstrap that
+           iterates the analytic fit against the same-model Monte Carlo reprice. The OREData
+           builder/report plumbing (model-neutral keys + modelType=FMM + fmm* fields) is the A5
+           milestone; this layer produces the numbers.
     \ingroup models
 */
 
@@ -45,9 +47,13 @@ struct FmmCapletVolTarget {
 
 struct FmmSwaptionVolTarget {
     FmmSwapSpec swap;
-    Real normalVol = 0.0;
+    Real normalVol = 0.0;        //!< target implied normal vol at the strike
+    Real strike = Null<Real>();  //!< Null = at the money (forward swap rate at pricing time)
     std::string label;
 };
+
+//! the strike a target is priced at (its own strike, or the forward swap rate when Null)
+Real fmmTargetStrike(const FmmParametrization& p, const FmmSwaptionVolTarget& t);
 
 //! separable volatility state; segmentTimes must equal the parametrization's vol breakpoints
 struct FmmSeparableVols {
@@ -80,16 +86,45 @@ void fmmCapletLevelBootstrap(FmmParametrization& p, FmmSeparableVols& v,
 
 //! strategy (b): sequential bootstrap of the a(t) segments to coterminal swaption targets
 //! (ascending expiries; segmentTimes must contain each target expiry except the last), holding
-//! the levels fixed; normalized to a(0) = 1 on exit
-void fmmSwaptionTimeDependenceBootstrap(FmmParametrization& p, FmmSeparableVols& v,
-                                        const std::vector<FmmSwaptionVolTarget>& targets);
+//! the levels fixed; each target is matched in normal-vol terms at its own strike with the given
+//! approximation; normalized to a(0) = 1 on exit
+void fmmSwaptionTimeDependenceBootstrap(
+    FmmParametrization& p, FmmSeparableVols& v, const std::vector<FmmSwaptionVolTarget>& targets,
+    const FmmSwaptionApproxMethod method = FmmSwaptionApproxMethod::StrikeFlatNormal);
 
 //! strategy (c): joint iteration — caplets fix levels, swaptions fix the time dependence;
 //! returns the calibration report with per-instrument residuals, iterations and runtime
 FmmCalibrationReport fmmJointBootstrap(FmmParametrization& p, FmmSeparableVols& v,
                                        const std::vector<FmmCapletVolTarget>& capletTargets,
                                        const std::vector<FmmSwaptionVolTarget>& swaptionTargets,
-                                       const Size maxIterations = 10, const Real tolBp = 1e-3);
+                                       const Size maxIterations = 10, const Real tolBp = 1e-3,
+                                       const FmmSwaptionApproxMethod method = FmmSwaptionApproxMethod::StrikeFlatNormal);
+
+//! MC-corrected strategy (b): the analytic bootstrap is iterated against targets shifted by the
+//! Monte Carlo-measured approximation bias (adjusted_k <- adjusted_k - (mcVol_k - marketVol_k))
+//! until the same-model MC reprices every market target within tolBp or maxIterations is hit.
+//! The MC reference uses randomized Sobol replications (fmmSwaptionMc); residuals are reported
+//! with their replication standard errors, so a residual is only meaningful relative to them.
+struct FmmMcCorrectedReport {
+    struct Row {
+        std::string instrument;
+        Real strike = 0.0;
+        Real marketVol = 0.0, approxVol = 0.0, mcVol = 0.0, mcVolSe = 0.0; //!< normal vols
+        Real residualBp = 0.0;                                            //!< (mcVol - marketVol) in bp
+    };
+    std::vector<Row> rows;             //!< final iteration
+    std::vector<Real> worstResidualBp; //!< per iteration
+    Size iterations = 0;
+    bool converged = false;
+    Real runtimeSeconds = 0.0;
+};
+FmmMcCorrectedReport fmmMcCorrectedSwaptionBootstrap(FmmParametrization& p,
+                                                     const QuantLib::ext::shared_ptr<ForwardMarketModel>& model,
+                                                     FmmSeparableVols& v,
+                                                     const std::vector<FmmSwaptionVolTarget>& targets,
+                                                     const FmmSwaptionApproxMethod method, const Size pathsPerRep,
+                                                     const Size reps, const BigNatural seed,
+                                                     const Size maxIterations = 5, const Real tolBp = 0.2);
 
 } // namespace QuantExt
 
