@@ -1,6 +1,7 @@
 ﻿# Portability check for the fmm branch (CLAUDE.md section 4.4): compile the fork and run the
-# FMM-relevant QuantExt test suites on Linux/GCC. Dependency set and configure flags mirror
-# ORE's own linux_build.yaml at tag 1.8.17.0; the build is narrowed to the QuantExt test
+# FMM-relevant QuantExt test suites on Linux/GCC, plus (second, parallel job) the OREData FMM
+# suite (A5.2 integration: FmmData, FmmBuilder, engine builders). Dependency set and configure
+# flags mirror ORE's own linux_build.yaml at tag 1.8.17.0; each job is narrowed to one test
 # target to keep CI times sane. Extend TEST_FILTER as new FMM suites are added.
 name: FMM Linux CI
 
@@ -58,4 +59,47 @@ jobs:
       run: |
         ./build/QuantExt/test/quantext-test-suite --log_level=message --report_level=short --run_test="${TEST_FILTER}"
 
-
+  build-test-ored:
+    name: build and run the OREData FMM suite (Linux)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v5
+      with:
+        submodules: recursive
+    - name: set up dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y \
+            libboost-all-dev \
+            libboost-test-dev \
+            ninja-build \
+            zlib1g-dev \
+            libeigen3-dev \
+            libbz2-dev \
+            liblzma-dev
+    - name: cmake configure
+      run: |
+        mkdir build
+        cd build
+        cmake \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=false \
+            -DBoost_USE_STATIC_RUNTIME=OFF \
+            -DQL_BUILD_EXAMPLES=false \
+            -DORE_PYTHON_INTEGRATION=ON \
+            -DQL_BUILD_TEST_SUITE=false \
+            -DQL_BUILD_BENCHMARK=false \
+            -DQL_ENABLE_SESSIONS=true \
+            -DORE_BUILD_DOC=false \
+            -DORE_BUILD_SWIG=false \
+            -DORE_BUILD_TESTS=ON \
+            -DCMAKE_POLICY_DEFAULT_CMP0167=NEW \
+            -G "Ninja" \
+            ..
+    - name: cmake build (OREData test target)
+      run: |
+        cd build
+        cmake --build . --target ored-test-suite -j $(nproc)
+    - name: run the OREData FMM suite
+      run: |
+        ./build/OREData/test/ored-test-suite --log_level=message --report_level=short --run_test=OREDataTestSuite/FmmTests

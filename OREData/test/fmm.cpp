@@ -1,0 +1,441 @@
+/*
+ Copyright (C) 2026 Ed Herranz
+ All rights reserved.
+
+ This file is part of ORE, a free-software/open-source library
+ for transparent pricing and risk analysis - http://opensourcerisk.org
+
+ ORE is free software: you can redistribute it and/or modify it
+ under the terms of the Modified BSD License.  You should have received a
+ copy of the license along with this program.
+ The license is also available online at <http://opensourcerisk.org>
+
+ This program is distributed on the basis that it will form a useful
+ contribution to risk analytics and model standardisation, but WITHOUT
+ ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ FITNESS FOR A PARTICULAR PURPOSE. See the license for more details.
+*/
+
+#include <boost/make_shared.hpp>
+#include <boost/test/unit_test.hpp>
+
+#include <ored/configuration/conventions.hpp>
+#include <ored/marketdata/marketimpl.hpp>
+#include <ored/model/fmmbuilder.hpp>
+#include <ored/model/fmmdata.hpp>
+#include <ored/portfolio/builders/bond.hpp>
+#include <ored/portfolio/builders/callablebond.hpp>
+#include <ored/portfolio/builders/fmm.hpp>
+#include <ored/portfolio/builders/swap.hpp>
+#include <ored/portfolio/builders/swaption.hpp>
+#include <ored/portfolio/callablebond.hpp>
+#include <ored/portfolio/enginedata.hpp>
+#include <ored/portfolio/swaption.hpp>
+#include <ored/utilities/indexparser.hpp>
+#include <ored/utilities/to_string.hpp>
+#include <ored/utilities/toplevelfixture.hpp>
+
+#include <ql/quotes/simplequote.hpp>
+#include <ql/termstructures/volatility/swaption/swaptionconstantvol.hpp>
+#include <ql/termstructures/yield/flatforward.hpp>
+#include <ql/time/calendars/nullcalendar.hpp>
+#include <ql/time/daycounters/actual365fixed.hpp>
+
+using namespace QuantLib;
+using namespace QuantExt;
+using namespace boost::unit_test_framework;
+using namespace std;
+using namespace ore::data;
+
+namespace {
+
+// flat USD-SOFR market with an OIS swap index family, a normal swaption vol and a security spread,
+// all behind quotes so that the recalibration modes can be exercised
+class FmmTestMarket : public MarketImpl {
+public:
+    FmmTestMarket(const Date& asof, const Real flatRate, const Real normalVol) : MarketImpl(false) {
+        asof_ = asof;
+        curveQuote_ = QuantLib::ext::make_shared<SimpleQuote>(flatRate);
+        volQuote_ = QuantLib::ext::make_shared<SimpleQuote>(normalVol);
+        spreadQuote_ = QuantLib::ext::make_shared<SimpleQuote>(0.0);
+        Handle<YieldTermStructure> yts(QuantLib::ext::make_shared<FlatForward>(0, NullCalendar(), Handle<Quote>(curveQuote_),
+                                                                              Actual365Fixed()));
+        Handle<IborIndex> sofr(parseIborIndex("USD-SOFR", yts));
+        iborIndices_[make_pair(Market::defaultConfiguration, "USD-SOFR")] = sofr;
+        // recent fixings: an overnight period starting on a weekend uses the preceding business day's fixing
+        for (Date d = asof - 10; d < asof; ++d)
+            if (sofr->isValidFixingDate(d))
+                sofr->addFixing(d, flatRate);
+
+        auto conventions = QuantLib::ext::make_shared<Conventions>();
+        conventions->add(QuantLib::ext::make_shared<OisConvention>("USD-SOFR-OIS", "0", "USD-SOFR", "A365", "NullCalendar",
+                                                                   "0", "false", "Annual", "F", "F", "Forward"));
+        conventions->add(QuantLib::ext::make_shared<SwapIndexConvention>("USD-CMS-2Y", "USD-SOFR-OIS"));
+        conventions->add(QuantLib::ext::make_shared<SwapIndexConvention>("USD-CMS-30Y", "USD-SOFR-OIS"));
+        InstrumentConventions::instance().setConventions(conventions);
+
+        yieldCurves_[make_tuple(Market::defaultConfiguration, YieldCurveType::Discount, "USD")] = yts;
+        yieldCurves_[make_tuple(Market::defaultConfiguration, YieldCurveType::Yield, "USD-SOFR")] = yts;
+        addSwapIndex("USD-CMS-2Y", "USD-SOFR", Market::defaultConfiguration);
+        addSwapIndex("USD-CMS-30Y", "USD-SOFR", Market::defaultConfiguration);
+        swaptionIndexBases_[make_pair(Market::defaultConfiguration, "USD-SOFR")] = make_pair("USD-CMS-2Y", "USD-CMS-30Y");
+        swaptionIndexBases_[make_pair(Market::defaultConfiguration, "USD")] = make_pair("USD-CMS-2Y", "USD-CMS-30Y");
+        Handle<QuantLib::SwaptionVolatilityStructure> svs(QuantLib::ext::make_shared<QuantLib::ConstantSwaptionVolatility>(
+            0, NullCalendar(), Following, Handle<Quote>(volQuote_), Actual365Fixed(), Normal, 0.0));
+        swaptionCurves_[make_pair(Market::defaultConfiguration, "USD")] = svs;
+        swaptionCurves_[make_pair(Market::defaultConfiguration, "USD-SOFR")] = svs;
+        securitySpreads_[make_pair(Market::defaultConfiguration, "SEC-FMM")] = Handle<Quote>(spreadQuote_);
+    }
+    QuantLib::ext::shared_ptr<SimpleQuote> curveQuote_, volQuote_, spreadQuote_;
+};
+
+const Date kAsof(19, September, 2026);
+
+QuantLib::ext::shared_ptr<EngineData> fmmEngineData(const std::string& product, const bool dualBound) {
+    auto ed = QuantLib::ext::make_shared<EngineData>();
+    ed->model(product) = "FMM";
+    ed->engine(product) = "LSM";
+    ed->modelParameters(product) = {{"Calibration", "Bootstrap"},
+                                    {"CalibrationStrategy", "CoterminalATM"},
+                                    {"Tolerance", "0.01"},
+                                    {"Volatility", "0.0025"},
+                                    {"VolatilityType", "DisplacedDiffusion"},
+                                    {"Shift", "1/tau"},
+                                    {"RhoInf", "0.6"},
+                                    {"Beta", "0.08"},
+                                    {"Factors", "3"},
+                                    {"ApproximationMethod", "EffectiveShift"},
+                                    {"Grid", "3M"},
+                                    {"GridToleranceDays", "3"},
+                                    {"ReferenceCalibrationGrid", "1Y,2Y,3Y,4Y"}};
+    ed->engineParameters(product) = {{"TrainingPaths", "16384"}, {"ValuationPaths", "16384"},
+                                     {"TrainingSeed", "42"},     {"ValuationSeed", "424242"},
+                                     {"BasisOrder", "2"},        {"DualBound", dualBound ? "true" : "false"},
+                                     {"DualOuterPaths", "256"},  {"DualInnerPaths", "32"}};
+    ed->globalParameters()["GenerateAdditionalResults"] = "true";
+    ed->model("Swap") = "DiscountedCashflows";
+    ed->engine("Swap") = "DiscountingSwapEngine";
+    ed->model("Bond") = "DiscountedCashflows";
+    ed->engine("Bond") = "DiscountingRiskyBondEngine";
+    ed->engineParameters("Bond") = {{"TimestepPeriod", "6M"}};
+    return ed;
+}
+
+QuantLib::ext::shared_ptr<EngineData> lgmEngineData(const std::string& product) {
+    auto ed = QuantLib::ext::make_shared<EngineData>();
+    ed->model(product) = "LGM";
+    ed->engine(product) = "Grid";
+    ed->modelParameters(product) = {{"Calibration", "Bootstrap"},
+                                    {"CalibrationStrategy", "CoterminalATM"},
+                                    {"Reversion", "0.02"},
+                                    {"Volatility", "0.01"},
+                                    {"VolatilityType", "Hagan"},
+                                    {"ReversionType", "HullWhite"},
+                                    {"Tolerance", "0.0001"},
+                                    {"ShiftHorizon", "0.5"},
+                                    {"ReferenceCalibrationGrid", "1Y,2Y,3Y,4Y"}};
+    ed->engineParameters(product) = {{"sy", "3.0"}, {"ny", "10"}, {"sx", "3.0"}, {"nx", "10"}};
+    ed->globalParameters()["GenerateAdditionalResults"] = "true";
+    ed->model("Swap") = "DiscountedCashflows";
+    ed->engine("Swap") = "DiscountingSwapEngine";
+    ed->model("Bond") = "DiscountedCashflows";
+    ed->engine("Bond") = "DiscountingRiskyBondEngine";
+    ed->engineParameters("Bond") = {{"TimestepPeriod", "6M"}};
+    return ed;
+}
+
+QuantLib::ext::shared_ptr<ore::data::Swaption> bermudanPayerSwaption(const Real fixedRate) {
+    ScheduleData fixedSchedule(ScheduleRules("2026-09-19", "2031-09-19", "1Y", "NullCalendar", "F", "F", "Forward"));
+    ScheduleData floatSchedule(ScheduleRules("2026-09-19", "2031-09-19", "3M", "NullCalendar", "F", "F", "Forward"));
+    LegData fixedLeg(QuantLib::ext::make_shared<FixedLegData>(std::vector<Real>(1, fixedRate)), true, "USD", fixedSchedule,
+                     "A365", std::vector<Real>(1, 1.0));
+    LegData floatLeg(QuantLib::ext::make_shared<FloatingLegData>("USD-SOFR", 0, true, std::vector<Real>(1, 0.0)), false,
+                     "USD", floatSchedule, "A365", std::vector<Real>(1, 1.0));
+    Envelope env("CP1");
+    OptionData optionData("Long", "Call", "Bermudan", true,
+                          {"2027-09-19", "2028-09-19", "2029-09-19", "2030-09-19"}, "Physical");
+    return QuantLib::ext::make_shared<ore::data::Swaption>(env, optionData, std::vector<LegData>{fixedLeg, floatLeg});
+}
+
+QuantLib::ext::shared_ptr<ore::data::CallableBond> callableBondFromXml() {
+    const std::string xml =
+        "<Trade id=\"CB-FMM\"><TradeType>CallableBond</TradeType>"
+        "<Envelope><CounterParty>CP1</CounterParty><NettingSetId>NS1</NettingSetId></Envelope>"
+        "<CallableBondData><BondData>"
+        "<IssuerId>ISSUER</IssuerId><CreditCurveId></CreditCurveId><CreditRisk>false</CreditRisk>"
+        "<SecurityId>SEC-FMM</SecurityId><ReferenceCurveId>USD-SOFR</ReferenceCurveId>"
+        "<SettlementDays>0</SettlementDays><Calendar>NullCalendar</Calendar><IssueDate>2026-09-19</IssueDate>"
+        "<LegData><LegType>Fixed</LegType><Payer>false</Payer><Currency>USD</Currency>"
+        "<Notionals><Notional>1</Notional></Notionals><DayCounter>A365</DayCounter><PaymentConvention>F</PaymentConvention>"
+        "<FixedLegData><Rates><Rate>0.031</Rate></Rates></FixedLegData>"
+        "<ScheduleData><Rules><StartDate>2026-09-19</StartDate><EndDate>2031-09-19</EndDate><Tenor>1Y</Tenor>"
+        "<Calendar>NullCalendar</Calendar><Convention>F</Convention><TermConvention>F</TermConvention><Rule>Forward</Rule>"
+        "</Rules></ScheduleData></LegData></BondData>"
+        "<CallData><Styles><Style>Bermudan</Style></Styles>"
+        "<ScheduleData><Dates><Dates><Date>2027-09-19</Date><Date>2028-09-19</Date><Date>2029-09-19</Date>"
+        "<Date>2030-09-19</Date></Dates></Dates></ScheduleData>"
+        "<Prices><Price>1.0</Price></Prices><PriceTypes><PriceType>Dirty</PriceType></PriceTypes>"
+        "<IncludeAccruals><IncludeAccrual>true</IncludeAccrual></IncludeAccruals></CallData>"
+        "</CallableBondData></Trade>";
+    XMLDocument doc;
+    doc.fromXMLString(xml);
+    auto trade = QuantLib::ext::make_shared<ore::data::CallableBond>();
+    trade->fromXML(doc.getFirstNode("Trade"));
+    return trade;
+}
+
+} // namespace
+
+BOOST_FIXTURE_TEST_SUITE(OREDataTestSuite, ore::data::TopLevelFixture)
+
+BOOST_AUTO_TEST_SUITE(FmmTests)
+
+BOOST_AUTO_TEST_CASE(testFmmDataXmlRoundTrip) {
+    BOOST_TEST_MESSAGE("Testing FmmData XML parsing, serialisation round trip and validation...");
+    const std::string xml =
+        "<FMM key=\"USD-SOFR\"><CalibrationType>Bootstrap</CalibrationType><Grid>3M</Grid><Shift>1/tau</Shift>"
+        "<VolatilityType>DisplacedDiffusion</VolatilityType><RhoInf>0.7</RhoInf><Beta>0.05</Beta><Factors>2</Factors>"
+        "<Volatility><Calibrate>Y</Calibrate><ParamType>Piecewise</ParamType><TimeGrid>1.0,2.0</TimeGrid>"
+        "<InitialValue>0.003</InitialValue></Volatility><ApproximationMethod>EffectiveShift</ApproximationMethod>"
+        "<McCorrected><Enabled>true</Enabled><PathsPerRep>8192</PathsPerRep><Reps>4</Reps><Seed>7</Seed>"
+        "<MaxIterations>2</MaxIterations><ToleranceBp>0.5</ToleranceBp></McCorrected><SubSteps>2</SubSteps>"
+        "<GridToleranceDays>4</GridToleranceDays><CalibrationSwaptions><Expiries>1Y,2Y,3Y</Expiries>"
+        "<Terms>4Y,3Y,2Y</Terms><Strikes>ATM,ATM,0.03</Strikes></CalibrationSwaptions></FMM>";
+    XMLDocument doc;
+    doc.fromXMLString(xml);
+    FmmData data;
+    data.fromXML(doc.getFirstNode("FMM"));
+    BOOST_CHECK_EQUAL(data.qualifier(), "USD-SOFR");
+    BOOST_CHECK(data.calibrationType() == CalibrationType::Bootstrap);
+    BOOST_CHECK(data.grid() == 3 * Months);
+    BOOST_CHECK(data.shift() == Null<Real>());
+    BOOST_CHECK(data.volatilityType() == FmmParametrization::LocalVolType::DisplacedDiffusion);
+    BOOST_CHECK_CLOSE(data.rhoInf(), 0.7, 1e-12);
+    BOOST_CHECK_CLOSE(data.beta(), 0.05, 1e-12);
+    BOOST_CHECK_EQUAL(data.factors(), Size(2));
+    BOOST_CHECK(data.calibrateVolatility());
+    BOOST_CHECK_EQUAL(data.volTimes().size(), Size(2));
+    BOOST_CHECK_EQUAL(data.volValues().size(), Size(1));
+    BOOST_CHECK(data.approximationMethod() == FmmSwaptionApproxMethod::EffectiveShift);
+    BOOST_CHECK(data.mcCorrection().enabled);
+    BOOST_CHECK_EQUAL(data.mcCorrection().reps, Size(4));
+    BOOST_CHECK_EQUAL(data.subSteps(), Size(2));
+    BOOST_CHECK_EQUAL(data.gridToleranceDays(), Natural(4));
+    BOOST_CHECK_EQUAL(data.optionExpiries().size(), Size(3));
+    BOOST_CHECK_EQUAL(data.optionStrikes()[2], "0.03");
+    // round trip
+    XMLDocument out;
+    XMLNode* node = data.toXML(out);
+    FmmData again;
+    again.fromXML(node);
+    BOOST_CHECK_EQUAL(again.qualifier(), data.qualifier());
+    BOOST_CHECK(again.grid() == data.grid());
+    BOOST_CHECK_CLOSE(again.rhoInf(), data.rhoInf(), 1e-12);
+    BOOST_CHECK_EQUAL(again.factors(), data.factors());
+    BOOST_CHECK_EQUAL(again.volTimes().size(), data.volTimes().size());
+    BOOST_CHECK(again.mcCorrection().enabled == data.mcCorrection().enabled);
+    BOOST_CHECK_EQUAL(again.mcCorrection().pathsPerRep, data.mcCorrection().pathsPerRep);
+    BOOST_CHECK_EQUAL(again.optionTerms().size(), Size(3));
+    // invalid combinations are rejected
+    FmmData bad = data;
+    bad.factors() = 0;
+    BOOST_CHECK_THROW(bad.validate(), QuantLib::Error);
+    FmmData bad2 = data;
+    bad2.volValues() = {-0.1};
+    BOOST_CHECK_THROW(bad2.validate(), QuantLib::Error);
+    FmmData bad3 = data;
+    bad3.calibrationType() = CalibrationType::FirstBestFitThenBootstrap;
+    BOOST_CHECK_THROW(bad3.validate(), QuantLib::Error);
+}
+
+BOOST_AUTO_TEST_CASE(testFmmBermudanSwaptionThroughEngineFactory) {
+    BOOST_TEST_MESSAGE("Testing a Bermudan swaption priced through the engine factory with model FMM / engine LSM "
+                       "(coterminal ATM bootstrap) against ORE's LGM grid engine on the same trade...");
+    Settings::instance().evaluationDate() = kAsof;
+    auto market = QuantLib::ext::make_shared<FmmTestMarket>(kAsof, 0.03, 0.0080);
+
+    auto fmmFactory = QuantLib::ext::make_shared<EngineFactory>(fmmEngineData("BermudanSwaption", true), market);
+    auto trade = bermudanPayerSwaption(0.031);
+    trade->build(fmmFactory);
+    const Real npvFmm = trade->instrument()->NPV();
+    const auto& add = trade->instrument()->additionalResults();
+    BOOST_TEST_MESSAGE("FMM/LSM Bermudan payer NPV " << npvFmm);
+    BOOST_REQUIRE(add.count("fmmLsmLowerBound") > 0);
+    const Real se = QuantLib::ext::any_cast<Real>(add.at("fmmLsmLowerBoundStdError"));
+    BOOST_CHECK_CLOSE(QuantLib::ext::any_cast<Real>(add.at("fmmLsmLowerBound")), npvFmm, 1e-10);
+    BOOST_REQUIRE(add.count("fmmDualityGap") > 0);
+    BOOST_CHECK(QuantLib::ext::any_cast<Real>(add.at("fmmDualityGap")) >
+                -3.0 * QuantLib::ext::any_cast<Real>(add.at("fmmDualityGapStdError")));
+    BOOST_REQUIRE(add.count("calibrationError") > 0);
+    BOOST_CHECK_EQUAL(QuantLib::ext::any_cast<std::string>(add.at("modelType")), "FMM");
+    const auto modelVols = QuantLib::ext::any_cast<std::vector<Real>>(add.at("fmmCalibrationModelVols"));
+    const auto marketVols = QuantLib::ext::any_cast<std::vector<Real>>(add.at("fmmCalibrationMarketVols"));
+    BOOST_REQUIRE_EQUAL(modelVols.size(), Size(4));
+    for (Size i = 0; i < modelVols.size(); ++i) {
+        BOOST_TEST_MESSAGE("calibration swaption " << i << ": market " << marketVols[i] * 1e4 << " bp, model "
+                                                   << modelVols[i] * 1e4 << " bp");
+        BOOST_CHECK_SMALL(marketVols[i] - 0.0080, 1e-12);
+        BOOST_CHECK_SMALL(modelVols[i] - marketVols[i], 1e-7); // analytic bootstrap (solver tolerance)
+    }
+    // the calibration helpers follow the SOFR fixing calendar while the trade uses NullCalendar dates
+    // (weekend anniversaries): the grid mapping absorbs this within GridToleranceDays
+    const Real mismatch = QuantLib::ext::any_cast<Real>(add.at("fmmGridMaxDateMismatchDays"));
+    BOOST_TEST_MESSAGE("grid max date mismatch (basket vs trade dates): " << mismatch << " days");
+    BOOST_CHECK(mismatch <= 3.0);
+    BOOST_CHECK_EQUAL(QuantLib::ext::any_cast<std::string>(add.at("fmmExerciseProbabilityType")), "unconditional");
+    BOOST_CHECK_EQUAL(fmmFactory->modelBuilders().size(), Size(1));
+
+    auto lgmFactory = QuantLib::ext::make_shared<EngineFactory>(lgmEngineData("BermudanSwaption"), market);
+    auto lgmTrade = bermudanPayerSwaption(0.031);
+    lgmTrade->build(lgmFactory);
+    const Real npvLgm = lgmTrade->instrument()->NPV();
+    BOOST_TEST_MESSAGE("LGM/Grid Bermudan payer NPV " << npvLgm << "; FMM - LGM = " << npvFmm - npvLgm << " ("
+                                                     << 100.0 * (npvFmm - npvLgm) / npvLgm << "% of value, LSM s.e. " << se
+                                                     << ")");
+    // different factor structures calibrated to the same coterminals: agreement at the few-percent
+    // level is a model difference (reported), the plumbing check is the 10% band plus MC noise
+    BOOST_CHECK_MESSAGE(std::fabs(npvFmm - npvLgm) < 0.10 * std::fabs(npvLgm) + 3.0 * se,
+                        "FMM vs LGM Bermudan: " << npvFmm << " vs " << npvLgm);
+}
+
+BOOST_AUTO_TEST_CASE(testFmmRecalibrationModes) {
+    BOOST_TEST_MESSAGE("Testing FmmBuilder lazy recalibration: vol bump + recalibrate, curve bump, and "
+                       "newCalcWithoutRecalibration (frozen parameters)...");
+    Settings::instance().evaluationDate() = kAsof;
+    auto market = QuantLib::ext::make_shared<FmmTestMarket>(kAsof, 0.03, 0.0080);
+    auto factory = QuantLib::ext::make_shared<EngineFactory>(fmmEngineData("BermudanSwaption", false), market);
+    auto trade = bermudanPayerSwaption(0.031);
+    trade->build(factory);
+    const Real npv0 = trade->instrument()->NPV();
+    const Real se = QuantLib::ext::any_cast<Real>(trade->instrument()->additionalResults().at("fmmLsmLowerBoundStdError"));
+    BOOST_REQUIRE_EQUAL(factory->modelBuilders().size(), Size(1));
+    auto builder = QuantLib::ext::dynamic_pointer_cast<FmmBuilder>(factory->modelBuilders().begin()->second);
+    BOOST_REQUIRE(builder);
+    BOOST_CHECK(!builder->requiresRecalibration());
+
+    // vol bump: the builder notices, recalibration changes the value
+    market->volQuote_->setValue(0.0100);
+    BOOST_CHECK(builder->requiresRecalibration());
+    builder->recalibrate();
+    const Real npvVolUp = trade->instrument()->NPV();
+    BOOST_TEST_MESSAGE("vol 80 -> 100 bp: NPV " << npv0 << " -> " << npvVolUp);
+    BOOST_CHECK_MESSAGE(npvVolUp > npv0 + 3.0 * se, "higher vol must raise the Bermudan value beyond noise");
+    const auto modelVols =
+        QuantLib::ext::any_cast<std::vector<Real>>(trade->instrument()->additionalResults().at("fmmCalibrationModelVols"));
+    for (const Real v : modelVols)
+        BOOST_CHECK_SMALL(v - 0.0100, 1e-9);
+
+    // frozen-parameter mode (scenario flow: the market moves, then newCalcWithoutRecalibration):
+    // the vol move is ignored, calibrated parameters and value stay put
+    market->volQuote_->setValue(0.0120);
+    builder->newCalcWithoutRecalibration();
+    BOOST_CHECK(!builder->requiresRecalibration());
+    const Real npvFrozen = trade->instrument()->NPV();
+    BOOST_TEST_MESSAGE("vol 100 -> 120 bp without recalibration: NPV " << npvFrozen << " (frozen at " << npvVolUp << ")");
+    BOOST_CHECK_SMALL(npvFrozen - npvVolUp, 1e-12);
+    const auto frozenVols =
+        QuantLib::ext::any_cast<std::vector<Real>>(trade->instrument()->additionalResults().at("fmmCalibrationModelVols"));
+    for (const Real v : frozenVols)
+        BOOST_CHECK_SMALL(v - 0.0100, 1e-9);
+
+    // next scenario: another vol move, this time followed by a recalibration
+    market->volQuote_->setValue(0.0110);
+    builder->recalibrate();
+    const Real npvVolUp2 = trade->instrument()->NPV();
+    const auto vols110 =
+        QuantLib::ext::any_cast<std::vector<Real>>(trade->instrument()->additionalResults().at("fmmCalibrationModelVols"));
+    for (const Real v : vols110)
+        BOOST_CHECK_SMALL(v - 0.0110, 1e-9);
+    BOOST_TEST_MESSAGE("vol 120 -> 110 bp with recalibration: NPV " << npvVolUp2);
+    BOOST_CHECK_MESSAGE(npvVolUp2 > npvVolUp + 3.0 * se, "the 110 bp value must exceed the 100 bp value beyond noise");
+
+    // curve bump: the engine observes the curve; recalibration keeps the vols, the value moves
+    market->curveQuote_->setValue(0.035);
+    builder->recalibrate();
+    const Real npvCurveUp = trade->instrument()->NPV();
+    BOOST_TEST_MESSAGE("curve 3% -> 3.5%: NPV " << npvVolUp2 << " -> " << npvCurveUp);
+    BOOST_CHECK_MESSAGE(std::fabs(npvCurveUp - npvVolUp2) > 3.0 * se, "a 50 bp curve move must change the payer value");
+}
+
+BOOST_AUTO_TEST_CASE(testFmmCallableBondThroughEngineFactory) {
+    BOOST_TEST_MESSAGE("Testing a callable bond priced through the engine factory with model FMM / engine LSM "
+                       "against ORE's LGM grid callable bond engine, with and without an issuer spread...");
+    Settings::instance().evaluationDate() = kAsof;
+    auto market = QuantLib::ext::make_shared<FmmTestMarket>(kAsof, 0.03, 0.0080);
+
+    auto fmmFactory = QuantLib::ext::make_shared<EngineFactory>(fmmEngineData("CallableBond", false), market);
+    auto trade = callableBondFromXml();
+    trade->build(fmmFactory);
+    const Real npvFmm = trade->instrument()->NPV();
+    const auto& add = trade->instrument()->additionalResults();
+    BOOST_REQUIRE(add.count("callPutValue") > 0);
+    const Real callFmm = QuantLib::ext::any_cast<Real>(add.at("callPutValue"));
+    const Real stripped = QuantLib::ext::any_cast<Real>(add.at("strippedBondNpv"));
+    const Real se = QuantLib::ext::any_cast<Real>(add.at("fmmLsmLowerBoundStdError"));
+    BOOST_TEST_MESSAGE("FMM/LSM callable bond NPV " << npvFmm << ", stripped " << stripped << ", call value " << callFmm
+                                                    << " +/- " << se);
+    BOOST_CHECK(callFmm > 0.0);
+    BOOST_CHECK_CLOSE(stripped - callFmm, npvFmm, 1e-8);
+
+    // analytic straight bond from the trade's own cash flows: FMM's stripped NPV is the curve value
+    Real straight = 0.0;
+    for (const auto& cf : trade->legs().front())
+        if (!cf->hasOccurred(kAsof))
+            straight += cf->amount() * market->discountCurve("USD")->discount(cf->date());
+    BOOST_TEST_MESSAGE("analytic straight bond " << straight);
+    BOOST_CHECK_SMALL(stripped - straight, 1e-10);
+
+    // ORE comparator: the LGM FD callable bond engine (24 time steps per year)
+    auto lgmData = lgmEngineData("CallableBond");
+    lgmData->engine("CallableBond") = "FD";
+    lgmData->engineParameters("CallableBond") = {
+        {"Scheme", "Douglas"}, {"StateGridPoints", "64"}, {"TimeStepsPerYear", "24"}, {"MesherEpsilon", "1e-4"}};
+    auto lgmFactory = QuantLib::ext::make_shared<EngineFactory>(lgmData, market);
+    auto lgmTrade = callableBondFromXml();
+    lgmTrade->build(lgmFactory);
+    const Real npvLgm = lgmTrade->instrument()->NPV();
+    const Real callLgm = QuantLib::ext::any_cast<Real>(lgmTrade->instrument()->additionalResults().at("callPutValue"));
+    const Real strippedLgm =
+        QuantLib::ext::any_cast<Real>(lgmTrade->instrument()->additionalResults().at("strippedBondNpv"));
+    BOOST_TEST_MESSAGE("LGM/FD callable bond NPV " << npvLgm << ", stripped " << strippedLgm << ", call value " << callLgm
+                                                     << "; FMM - LGM call = " << callFmm - callLgm);
+    BOOST_CHECK_SMALL(stripped - strippedLgm, 5e-5); // FD discretisation
+
+    // ORE's event-time-grid variant (Grid builder, no intermediate time steps) omits the coupon paid at
+    // the first event after the valuation date: at its own pay date the coupon has couponRatio 0 and is
+    // excluded from the underlying, and no earlier time step revisits it (reported, not asserted)
+    auto gridFactory = QuantLib::ext::make_shared<EngineFactory>(lgmEngineData("CallableBond"), market);
+    auto gridTrade = callableBondFromXml();
+    gridTrade->build(gridFactory);
+    const Real strippedGrid =
+        QuantLib::ext::any_cast<Real>(gridTrade->instrument()->additionalResults().at("strippedBondNpv"));
+    const auto& firstCoupon = trade->legs().front().front();
+    BOOST_TEST_MESSAGE("LGM/Grid (event-time grid) stripped bond NPV "
+                       << strippedGrid << ": difference to FD " << strippedGrid - strippedLgm
+                       << ", first coupon discounted "
+                       << firstCoupon->amount() * market->discountCurve("USD")->discount(firstCoupon->date()));
+    BOOST_CHECK_MESSAGE(std::fabs(callFmm - callLgm) < 0.10 * callLgm + 3.0 * se,
+                        "FMM vs LGM callable bond option: " << callFmm << " vs " << callLgm);
+
+    // issuer spread through the market's security spread
+    market->spreadQuote_->setValue(0.005);
+    for (auto& mb : fmmFactory->modelBuilders())
+        mb.second->recalibrate();
+    const Real npvFmmSpread = trade->instrument()->NPV();
+    const Real strippedSpread = QuantLib::ext::any_cast<Real>(trade->instrument()->additionalResults().at("strippedBondNpv"));
+    for (auto& mb : lgmFactory->modelBuilders())
+        mb.second->recalibrate();
+    const Real npvLgmSpread = lgmTrade->instrument()->NPV();
+    const Real strippedLgmSpread =
+        QuantLib::ext::any_cast<Real>(lgmTrade->instrument()->additionalResults().at("strippedBondNpv"));
+    BOOST_TEST_MESSAGE("50 bp issuer spread: FMM " << npvFmmSpread << " (stripped " << strippedSpread << ") vs LGM "
+                                                   << npvLgmSpread << " (stripped " << strippedLgmSpread << ")");
+    BOOST_CHECK(strippedSpread < stripped);
+    BOOST_CHECK_SMALL(strippedSpread - strippedLgmSpread, 5e-5);
+    BOOST_CHECK_MESSAGE(std::fabs(npvFmmSpread - npvLgmSpread) < 0.10 * callLgm + 3.0 * se,
+                        "FMM vs LGM callable bond with spread: " << npvFmmSpread << " vs " << npvLgmSpread);
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
+BOOST_AUTO_TEST_SUITE_END()

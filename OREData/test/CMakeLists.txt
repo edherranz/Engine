@@ -1,4 +1,4 @@
-# cpp files, this list is maintained manually
+﻿# cpp files, this list is maintained manually
 
 set(OREData-Test_SRC adjustmentfactors.cpp
 basecorrelationcurve.cpp
@@ -36,6 +36,7 @@ equityswap.cpp
 equitytrades.cpp
 expiry.cpp
 fittedbondcurve.cpp
+fmm.cpp
 fixings.cpp
 formulaparser.cpp
 fxaccumulator.cpp

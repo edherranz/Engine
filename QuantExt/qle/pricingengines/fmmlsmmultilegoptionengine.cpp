@@ -54,6 +54,17 @@ void FmmLegMapper::addLeg(const Leg& leg, const Real sign, FmmCallableInstrument
                        "FmmLegMapper: " << what
                                         << ": lookback / rate cut-off conventions are not supported in this "
                                            "release (baseline scope: plain compounded RFR)");
+            // the rate window must be the accrual period (up to calendar adjustment): ORE's fixing-in-advance
+            // (IsInArrears=false) and last-recent-period legs shift the value dates by whole periods
+            QL_REQUIRE(!on->valueDates().empty(), "FmmLegMapper: " << what << ": overnight coupon without value dates");
+            const auto dStart = on->valueDates().front() - on->accrualStartDate();
+            const auto dEnd = on->valueDates().back() - on->accrualEndDate();
+            QL_REQUIRE(dStart >= -7 && dStart <= 7 && dEnd >= -7 && dEnd <= 7,
+                       "FmmLegMapper: " << what << ": the rate computation window (" << on->valueDates().front()
+                                        << " - " << on->valueDates().back() << ") differs from the accrual period ("
+                                        << on->accrualStartDate() << " - " << on->accrualEndDate()
+                                        << "): fixing in advance / last recent period is not supported (baseline "
+                                           "scope: in-arrears compounded RFR)");
             FmmCallableInstrument::CompoundedFloat f;
             f.startIdx = grid_.index(on->accrualStartDate(), toleranceDays_, what + " accrual start");
             f.endIdx = grid_.index(on->accrualEndDate(), toleranceDays_, what + " accrual end");
@@ -139,6 +150,8 @@ FmmLsmMultiLegOptionEngine::FmmLsmMultiLegOptionEngine(const QuantLib::ext::shar
     QL_REQUIRE(grid_->numberOfRates() == model_->parametrization()->numberOfRates(),
                "FmmLsmMultiLegOptionEngine: grid and model disagree on the number of periods");
     registerWith(model_->parametrization()->termStructure());
+    for (const auto& o : config_.observables)
+        registerWith(o);
 }
 
 void FmmLsmMultiLegOptionEngine::calculate() const {
@@ -218,6 +231,9 @@ void FmmLsmMultiLegOptionEngine::calculate() const {
             pricer.dualBound(config_.dualOuterPaths, config_.dualInnerPaths, config_.dualSeed));
     fmmWriteLsmResults(results_.additionalResults, res, dual.get(), config_, *grid_);
     results_.additionalResults["fmmExerciseDates"] = arguments_.exercise->dates();
+    if (config_.calibrationResults)
+        for (const auto& kv : config_.calibrationResults())
+            results_.additionalResults[kv.first] = kv.second;
 }
 
 } // namespace QuantExt

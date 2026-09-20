@@ -1,4 +1,4 @@
-# cpp files, this list is maintained manually
+﻿# cpp files, this list is maintained manually
 
 set(OREData_SRC configuration/basecorrelationcurveconfig.cpp
 configuration/baseltrafficlightconfig.cpp
@@ -110,6 +110,8 @@ model/irlgmdata.cpp
 model/irmodelbuilder.cpp
 model/irmodeldata.cpp
 model/lgmbuilder.cpp
+model/fmmbuilder.cpp
+model/fmmdata.cpp
 model/lgmdata.cpp
 model/localvolmodelbuilder.cpp
 model/modeldata.cpp
@@ -210,6 +212,7 @@ portfolio/builders/riskparticipationagreement.cpp
 portfolio/builders/scriptedtrade.cpp
 portfolio/builders/swap.cpp
 portfolio/builders/swaption.cpp
+portfolio/builders/fmm.cpp
 portfolio/builders/utilities.cpp
 portfolio/builders/varianceswap.cpp
 portfolio/builders/yoycapfloor.cpp
@@ -548,6 +551,8 @@ model/irlgmdata.hpp
 model/irmodelbuilder.hpp
 model/irmodeldata.hpp
 model/lgmbuilder.hpp
+model/fmmbuilder.hpp
+model/fmmdata.hpp
 model/lgmdata.hpp
 model/localvolmodelbuilder.hpp
 model/modeldata.hpp
@@ -655,6 +660,7 @@ portfolio/builders/riskparticipationagreement.hpp
 portfolio/builders/scriptedtrade.hpp
 portfolio/builders/swap.hpp
 portfolio/builders/swaption.hpp
+portfolio/builders/fmm.hpp
 portfolio/builders/utilities.hpp
 portfolio/builders/vanillaoption.hpp
 portfolio/builders/varianceswap.hpp

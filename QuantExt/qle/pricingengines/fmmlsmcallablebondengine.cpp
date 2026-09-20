@@ -41,6 +41,8 @@ FmmLsmCallableBondEngine::FmmLsmCallableBondEngine(const QuantLib::ext::shared_p
     registerWith(referenceCurve_);
     registerWith(discountingSpread_);
     registerWith(creditCurve_);
+    for (const auto& o : config_.observables)
+        registerWith(o);
 }
 
 void FmmLsmCallableBondEngine::calculate() const {
@@ -139,6 +141,9 @@ void FmmLsmCallableBondEngine::calculate() const {
         results_.additionalResults["fmmValuationPerspective"] =
             std::string("issuer (Cancel style); NPV reported for the holder as -(issuer value)");
     }
+    if (config_.calibrationResults)
+        for (const auto& kv : config_.calibrationResults())
+            results_.additionalResults[kv.first] = kv.second;
 }
 
 } // namespace QuantExt

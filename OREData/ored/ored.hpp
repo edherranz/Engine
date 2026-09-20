@@ -103,6 +103,8 @@
 #include <ored/model/crossassetmodeldata.hpp>
 #include <ored/model/eqbsbuilder.hpp>
 #include <ored/model/eqbsdata.hpp>
+#include <ored/model/fmmbuilder.hpp>
+#include <ored/model/fmmdata.hpp>
 #include <ored/model/fxbsbuilder.hpp>
 #include <ored/model/fxbsdata.hpp>
 #include <ored/model/fxdata.hpp>
@@ -205,6 +207,7 @@
 #include <ored/portfolio/builders/equityoutperformanceoption.hpp>
 #include <ored/portfolio/builders/equitytouchoption.hpp>
 #include <ored/portfolio/builders/flexiswap.hpp>
+#include <ored/portfolio/builders/fmm.hpp>
 #include <ored/portfolio/builders/formulabasedcoupon.hpp>
 #include <ored/portfolio/builders/forwardbond.hpp>
 #include <ored/portfolio/builders/fxasianoption.hpp>

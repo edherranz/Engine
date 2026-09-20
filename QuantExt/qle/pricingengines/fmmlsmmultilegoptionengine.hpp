@@ -31,6 +31,12 @@
 #include <qle/models/fmmgrid.hpp>
 #include <qle/models/fmmlsmpricer.hpp>
 
+#include <ql/any.hpp>
+#include <ql/patterns/observable.hpp>
+
+#include <functional>
+#include <map>
+
 namespace QuantExt {
 
 //! LSM engine configuration shared by the FMM trade engines
@@ -40,6 +46,12 @@ struct FmmLsmEngineConfig {
     Size dualOuterPaths = 512, dualInnerPaths = 64;
     BigNatural dualSeed = 20260920;
     Natural gridToleranceDays = 3;
+    //! observables the engine registers with (typically the calibrated IrModel adapter, so a
+    //! recalibration invalidates cached instrument values)
+    std::vector<QuantLib::ext::shared_ptr<Observable>> observables;
+    //! calibration record merged into the additional results at pricing time (e.g. the
+    //! builder's FmmCalibrationInfo::additionalResults)
+    std::function<std::map<std::string, QuantLib::ext::any>()> calibrationResults;
 };
 
 //! maps ORE / QuantLib legs onto an FmmCallableInstrument flow set (shared by the trade engines)

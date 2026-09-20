@@ -1,4 +1,4 @@
-/*
+﻿/*
  Copyright (C) 2023 Quaternion Risk Management Ltd
  All rights reserved.
 
@@ -111,6 +111,7 @@
 #include <ored/portfolio/builders/quantovanillaoption.hpp>
 #include <ored/portfolio/builders/swap.hpp>
 #include <ored/portfolio/builders/swaption.hpp>
+#include <ored/portfolio/builders/fmm.hpp>
 #include <ored/portfolio/builders/vanillaoption.hpp>
 #include <ored/portfolio/builders/varianceswap.hpp>
 #include <ored/portfolio/builders/yoycapfloor.hpp>
@@ -496,6 +497,7 @@ void dataBuilders() {
     ORE_REGISTER_ENGINE_BUILDER(EuropeanSwaptionEngineBuilder, false)
     ORE_REGISTER_ENGINE_BUILDER(LGMGridSwaptionEngineBuilder, false)
     ORE_REGISTER_ENGINE_BUILDER(LGMFDSwaptionEngineBuilder, false)
+    ORE_REGISTER_ENGINE_BUILDER(FmmLsmSwaptionEngineBuilder, false)
     ORE_REGISTER_ENGINE_BUILDER(CamMCSwaptionEngineBuilder, false)
     ORE_REGISTER_ENGINE_BUILDER(CamMCCgSwaptionEngineBuilder, false)
     ORE_REGISTER_ENGINE_BUILDER(VarSwapEngineBuilder, false)
@@ -580,6 +582,7 @@ void dataBuilders() {
     ORE_REGISTER_ENGINE_BUILDER(ConvertibleBondFDDefaultableEquityJumpDiffusionEngineBuilder, false)
     ORE_REGISTER_ENGINE_BUILDER(CallableBondLgmFdEngineBuilder, false)
     ORE_REGISTER_ENGINE_BUILDER(CallableBondLgmGridEngineBuilder, false)
+    ORE_REGISTER_ENGINE_BUILDER(FmmLsmCallableBondEngineBuilder, false)
     ORE_REGISTER_ENGINE_BUILDER(CallableBondCamMcEngineBuilder, false)
     ORE_REGISTER_ENGINE_BUILDER(CboMCEngineBuilder, false)
     ORE_REGISTER_ENGINE_BUILDER(DiscountingBondFutureEngineBuilder, false)
