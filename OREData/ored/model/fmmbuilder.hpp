@@ -49,6 +49,11 @@ struct FmmCalibrationInfo {
     std::string approximationMethod;
     std::vector<QuantExt::SwaptionData> swaptionData; //!< basket details (inherited format)
     std::vector<Real> expiryTimes, strikes, marketVols, modelVols, effectiveShifts, mcVols, mcVolStdErrors;
+    //! cap/floor basket (joint bootstrap), empty when no basket was configured
+    std::vector<Real> capletTimes, capletStrikes, capletMarketVols, capletModelVols;
+    Size jointIterations = 0;
+    bool jointConverged = false;
+    Real capletMaxResidualBp = Null<Real>();
     Size gridPeriods = 0;
     Natural gridMaxDateMismatchDays = 0;
     Size mcIterations = 0;

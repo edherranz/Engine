@@ -88,6 +88,12 @@ QuantLib::ext::shared_ptr<FmmBuilder> fmmModelBuilder(const EngineBuilder* build
     data->noticeCalendar() = parseCalendar(builder->modelParameter("NoticeCalendar", {}, false, "NullCalendar"));
     data->noticeConvention() =
         parseBusinessDayConvention(builder->modelParameter("NoticeConvention", {}, false, "Preceding"));
+    // optional cap/floor (optionlet) basket fitted jointly with the swaptions
+    data->capFloorBasket() = builder->modelParameter("CapFloorBasket", {}, false, "None");
+    data->capFloorHorizon() = parsePeriod(builder->modelParameter("CapFloorHorizon", {}, false, "0D"));
+    data->jointMaxIterations() =
+        static_cast<Size>(parseInteger(builder->modelParameter("JointMaxIterations", {}, false, "10")));
+    data->jointToleranceBp() = parseReal(builder->modelParameter("JointToleranceBp", {}, false, "0.1"));
 
     if (calibrationStrategy != CalibrationStrategy::None) {
         for (Size i = 0; i < req.expiries.size(); ++i) {

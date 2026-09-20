@@ -68,6 +68,15 @@ std::map<std::string, QuantLib::ext::any> FmmCalibrationInfo::additionalResults(
         m["fmmCalibrationMcIterations"] = static_cast<Real>(mcIterations);
         m["fmmCalibrationMcConverged"] = mcConverged;
     }
+    if (!capletTimes.empty()) {
+        m["fmmCalibrationCapletTimes"] = capletTimes;
+        m["fmmCalibrationCapletStrikes"] = capletStrikes;
+        m["fmmCalibrationCapletMarketVols"] = capletMarketVols;
+        m["fmmCalibrationCapletModelVols"] = capletModelVols;
+        m["fmmJointIterations"] = static_cast<Real>(jointIterations);
+        m["fmmJointConverged"] = jointConverged;
+        m["fmmCapletMaxResidualBp"] = capletMaxResidualBp;
+    }
     m["fmmGridPeriods"] = static_cast<Real>(gridPeriods);
     m["fmmGridMaxDateMismatchDays"] = static_cast<Real>(gridMaxDateMismatchDays);
     std::vector<Real> t, len, k, fwd, ann, vega, sd;
@@ -202,9 +211,15 @@ void FmmBuilder::initParametrization() const {
     Array volTimes(data->volTimes().begin(), data->volTimes().end());
     std::vector<Real> levels = data->volValues();
     if (data->calibrateVolatility() && data->calibrationType() == CalibrationType::Bootstrap) {
-        QL_REQUIRE(!swaptionExpiries_.empty(), "FmmBuilder: no calibrating swaption provided.");
-        volTimes = Array(swaptionExpiries_.begin(), std::next(swaptionExpiries_.end(), -1));
-        levels.assign(volTimes.size() + 1, data->volValues().front());
+        QL_REQUIRE(!swaptionExpiries_.empty() || data->capFloorBasket() != "None",
+                   "FmmBuilder: no calibrating swaption provided.");
+        if (swaptionExpiries_.empty()) {
+            volTimes = Array(); // caplet-only bootstrap: constant a(t)
+            levels = {data->volValues().front()};
+        } else {
+            volTimes = Array(swaptionExpiries_.begin(), std::next(swaptionExpiries_.end(), -1));
+            levels.assign(volTimes.size() + 1, data->volValues().front());
+        }
     } else if (data->volParamType() == ParamType::Constant) {
         volTimes = Array();
         levels = {data->volValues().front()};
@@ -288,11 +303,64 @@ void FmmBuilder::calibrate() const {
             return L;
         };
         v.levels = scaledLevels(data->volValues().front());
+        // cap/floor basket: one backward-looking caplet per grid period up to the horizon, struck at
+        // the period's forward, target vol from the market's stripped optionlet surface (looked up at
+        // the period end, as ORE's overnight caplet pricer does)
+        std::vector<FmmCapletVolTarget> caplets;
+        if (data->capFloorBasket() == "ATM") {
+            const auto ovs = market_->capFloorVol(data->qualifier(), configuration_);
+            QL_REQUIRE(!ovs.empty(), "FmmBuilder: no cap/floor volatility surface for " << data->qualifier());
+            QL_REQUIRE(ovs->volatilityType() == Normal,
+                       "FmmBuilder: the cap/floor basket needs a normal optionlet surface for " << data->qualifier());
+            const Date horizon = data->capFloorHorizon().length() > 0 ? referenceDate_ + data->capFloorHorizon()
+                                                                        : grid_->dates().back();
+            for (Size j = 1; j <= p.numberOfRates(); ++j) {
+                if (grid_->dates()[j] > horizon || p.rateTime(j) <= 0.0)
+                    continue;
+                FmmCapletVolTarget c;
+                c.bucket = j;
+                c.backwardLooking = true;
+                const Real F0 = (p.termStructure()->discount(p.rateTime(j - 1)) /
+                                     p.termStructure()->discount(p.rateTime(j)) -
+                                 1.0) /
+                                p.tau(j);
+                c.normalVol = ovs->volatility(grid_->dates()[j], F0, true);
+                caplets.push_back(c);
+                info_.capletTimes.push_back(p.rateTime(j));
+                info_.capletStrikes.push_back(F0);
+                info_.capletMarketVols.push_back(c.normalVol);
+            }
+            QL_REQUIRE(!caplets.empty(), "FmmBuilder: cap/floor basket is empty (horizon " << horizon << ")");
+        }
         if (data->calibrationType() == CalibrationType::Bootstrap) {
-            QL_REQUIRE(targets.size() == v.a.size(),
-                       "FmmBuilder: bootstrap needs one volatility segment per calibration swaption, got "
-                           << v.a.size() << " segments for " << targets.size() << " active swaptions");
-            fmmSwaptionTimeDependenceBootstrap(p, v, targets, method);
+            if (!caplets.empty() && targets.empty()) {
+                fmmCapletLevelBootstrap(p, v, caplets);
+                info_.jointIterations = 1;
+                info_.jointConverged = true;
+            } else if (!caplets.empty()) {
+                QL_REQUIRE(targets.size() == v.a.size(),
+                           "FmmBuilder: bootstrap needs one volatility segment per calibration swaption, got "
+                               << v.a.size() << " segments for " << targets.size() << " active swaptions");
+                const auto rep = fmmJointBootstrap(p, v, caplets, targets, data->jointMaxIterations(),
+                                                   data->jointToleranceBp(), method);
+                info_.jointIterations = rep.iterations;
+                info_.jointConverged = rep.converged;
+            } else {
+                QL_REQUIRE(targets.size() == v.a.size(),
+                           "FmmBuilder: bootstrap needs one volatility segment per calibration swaption, got "
+                               << v.a.size() << " segments for " << targets.size() << " active swaptions");
+                fmmSwaptionTimeDependenceBootstrap(p, v, targets, method);
+            }
+            if (!caplets.empty()) {
+                Real worst = 0.0;
+                for (const auto& c : caplets) {
+                    const Real modelVol = fmmCapletNormalVol(p, c.bucket, info_.capletStrikes[info_.capletModelVols.size()],
+                                                             c.backwardLooking);
+                    info_.capletModelVols.push_back(modelVol);
+                    worst = std::max(worst, std::fabs(modelVol - c.normalVol) * 1e4);
+                }
+                info_.capletMaxResidualBp = worst;
+            }
         } else if (data->calibrationType() == CalibrationType::BestFit) {
             // one common level, mean vol residual zero across the basket
             Brent solver;

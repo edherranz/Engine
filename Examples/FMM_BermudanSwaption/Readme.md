@@ -12,6 +12,9 @@ deal-strike swaptions, bootstrap):
 - `Input/ore_lgm.xml`: ORE's LGM grid engine, output in `Output_LGM`.
 - `Input/ore_atm.xml`: the FMM again with the `CoterminalATM` calibration strategy (the basket
   struck at the forward swap rates instead of the deal strike), output in `Output_ATM`.
+- `Input/ore_joint.xml`: the FMM calibrated jointly (`CapFloorBasket` ATM) to the USD-SOFR optionlets
+  stripped by the market (one caplet per quarterly period) and to the deal-strike coterminal
+  swaptions; both residual tables are in the additional results, output in `Output_Joint`.
 
 Market inputs (quotes, curve configuration, conventions) are those of `Examples/Products`;
 `Input/todaysmarket.xml` only selects the USD-SOFR curve, the SOFR swap index family and the

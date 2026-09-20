@@ -86,6 +86,10 @@ void FmmData::reset() {
     noticePeriod_ = 0 * Days;
     noticeCalendar_ = NullCalendar();
     noticeConvention_ = Preceding;
+    capFloorBasket_ = "None";
+    capFloorHorizon_ = 0 * Days;
+    jointMaxIterations_ = 10;
+    jointToleranceBp_ = 0.1;
     mc_ = McCorrection();
     subSteps_ = 1;
     gridToleranceDays_ = 3;
@@ -117,7 +121,12 @@ void FmmData::validate() const {
     if (calibrationType_ != CalibrationType::None)
         QL_REQUIRE(calibrationType_ == CalibrationType::Bootstrap || calibrationType_ == CalibrationType::BestFit,
                    "FmmData: CalibrationType must be None, Bootstrap or BestFit");
-    if (calibrateVol_ && calibrationType_ != CalibrationType::None)
+    QL_REQUIRE(capFloorBasket_ == "None" || capFloorBasket_ == "ATM",
+               "FmmData: CapFloorBasket must be None or ATM, got " << capFloorBasket_);
+    QL_REQUIRE(capFloorBasket_ == "None" || calibrationType_ == CalibrationType::Bootstrap,
+               "FmmData: a cap/floor basket needs CalibrationType Bootstrap (joint bootstrap)");
+    QL_REQUIRE(jointMaxIterations_ >= 1 && jointToleranceBp_ > 0.0, "FmmData: joint iterations / tolerance invalid");
+    if (calibrateVol_ && calibrationType_ != CalibrationType::None && capFloorBasket_ == "None")
         QL_REQUIRE(!optionExpiries_.empty(), "FmmData: volatility calibration needs calibration swaptions");
 }
 
@@ -158,6 +167,10 @@ void FmmData::fromXML(XMLNode* node) {
     noticePeriod_ = parsePeriod(XMLUtils::getChildValue(node, "NoticePeriod", false, "0D"));
     noticeCalendar_ = parseCalendar(XMLUtils::getChildValue(node, "NoticeCalendar", false, "NullCalendar"));
     noticeConvention_ = parseBusinessDayConvention(XMLUtils::getChildValue(node, "NoticeConvention", false, "Preceding"));
+    capFloorBasket_ = XMLUtils::getChildValue(node, "CapFloorBasket", false, "None");
+    capFloorHorizon_ = parsePeriod(XMLUtils::getChildValue(node, "CapFloorHorizon", false, "0D"));
+    jointMaxIterations_ = static_cast<Size>(XMLUtils::getChildValueAsInt(node, "JointMaxIterations", false, 10));
+    jointToleranceBp_ = XMLUtils::getChildValueAsDouble(node, "JointToleranceBp", false, 0.1);
 
     if (XMLNode* optionsNode = XMLUtils::getChildNode(node, "CalibrationSwaptions")) {
         optionExpiries() = XMLUtils::getChildrenValuesAsStrings(optionsNode, "Expiries", false);
@@ -206,6 +219,12 @@ XMLNode* FmmData::toXML(XMLDocument& doc) const {
         XMLUtils::addChild(doc, node, "NoticePeriod", ore::data::to_string(noticePeriod_));
         XMLUtils::addChild(doc, node, "NoticeCalendar", noticeCalendar_.name());
         XMLUtils::addChild(doc, node, "NoticeConvention", ore::data::to_string(noticeConvention_));
+    }
+    if (capFloorBasket_ != "None") {
+        XMLUtils::addChild(doc, node, "CapFloorBasket", capFloorBasket_);
+        XMLUtils::addChild(doc, node, "CapFloorHorizon", ore::data::to_string(capFloorHorizon_));
+        XMLUtils::addChild(doc, node, "JointMaxIterations", static_cast<int>(jointMaxIterations_));
+        XMLUtils::addChild(doc, node, "JointToleranceBp", jointToleranceBp_);
     }
     XMLNode* calibrationSwaptionsNode = XMLUtils::addChild(doc, node, "CalibrationSwaptions");
     XMLUtils::addGenericChildAsList(doc, calibrationSwaptionsNode, "Expiries", optionExpiries());

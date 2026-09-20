@@ -39,6 +39,7 @@
 #include <ored/utilities/toplevelfixture.hpp>
 
 #include <ql/quotes/simplequote.hpp>
+#include <ql/termstructures/volatility/optionlet/constantoptionletvol.hpp>
 #include <ql/termstructures/volatility/swaption/swaptionconstantvol.hpp>
 #include <ql/termstructures/yield/flatforward.hpp>
 #include <ql/time/calendars/nullcalendar.hpp>
@@ -88,6 +89,10 @@ public:
         swaptionCurves_[make_pair(Market::defaultConfiguration, "USD")] = svs;
         swaptionCurves_[make_pair(Market::defaultConfiguration, "USD-SOFR")] = svs;
         securitySpreads_[make_pair(Market::defaultConfiguration, "SEC-FMM")] = Handle<Quote>(spreadQuote_);
+        Handle<QuantLib::OptionletVolatilityStructure> ovs(QuantLib::ext::make_shared<QuantLib::ConstantOptionletVolatility>(
+            0, NullCalendar(), Following, Handle<Quote>(volQuote_), Actual365Fixed(), Normal, 0.0));
+        capFloorCurves_[make_pair(Market::defaultConfiguration, "USD")] = ovs;
+        capFloorCurves_[make_pair(Market::defaultConfiguration, "USD-SOFR")] = ovs;
     }
     QuantLib::ext::shared_ptr<SimpleQuote> curveQuote_, volQuote_, spreadQuote_;
 };
@@ -588,6 +593,93 @@ BOOST_AUTO_TEST_CASE(testFmmBuilderEvaluationDateMove) {
     const Real npv2 = trade2->instrument()->NPV();
     BOOST_TEST_MESSAGE("NPV of a forward-starting swaption one month later " << npv2);
     BOOST_CHECK(npv2 > 0.0);
+}
+
+BOOST_AUTO_TEST_CASE(testFmmJointCapFloorSwaptionCalibration) {
+    BOOST_TEST_MESSAGE("Testing the cap/floor (optionlet) basket through the engine factory: joint bootstrap of the "
+                       "ATM caplets from the market's optionlet surface and the coterminal swaptions...");
+    Settings::instance().evaluationDate() = kAsof;
+    auto market = QuantLib::ext::make_shared<FmmTestMarket>(kAsof, 0.03, 0.0080);
+
+    // one factor, perfectly correlated, flat 80 bp caplets and 80 bp coterminal swaptions: the
+    // swaptions are matched exactly (they are fitted last in each joint iteration) while the
+    // backward-looking caplets keep a small structural residual, since their in-period variance is
+    // not seen by the swaptions; the iteration reaches its cap and the residual is reported, not forced
+    auto factory1 = QuantLib::ext::make_shared<EngineFactory>(
+        fmmEngineData("BermudanSwaption", false,
+                      {{"CapFloorBasket", "ATM"}, {"Factors", "1"}, {"RhoInf", "1.0"}, {"Beta", "0.0"},
+                       {"JointMaxIterations", "15"}, {"JointToleranceBp", "0.05"}}),
+        market);
+    auto trade1 = bermudanPayerSwaption(0.031);
+    trade1->build(factory1);
+    const Real npv1 = trade1->instrument()->NPV();
+    const auto& add1 = trade1->instrument()->additionalResults();
+    BOOST_REQUIRE(add1.count("fmmCalibrationCapletMarketVols") > 0);
+    const auto capMkt = QuantLib::ext::any_cast<std::vector<Real>>(add1.at("fmmCalibrationCapletMarketVols"));
+    const auto capMdl = QuantLib::ext::any_cast<std::vector<Real>>(add1.at("fmmCalibrationCapletModelVols"));
+    const auto capT = QuantLib::ext::any_cast<std::vector<Real>>(add1.at("fmmCalibrationCapletTimes"));
+    const auto swpMkt = QuantLib::ext::any_cast<std::vector<Real>>(add1.at("fmmCalibrationMarketVols"));
+    const auto swpMdl = QuantLib::ext::any_cast<std::vector<Real>>(add1.at("fmmCalibrationModelVols"));
+    BOOST_REQUIRE_EQUAL(capMkt.size(), capMdl.size());
+    BOOST_CHECK_EQUAL(capMkt.size(), Size(20)); // one caplet per quarterly period over the 5y grid
+    BOOST_REQUIRE_EQUAL(swpMkt.size(), Size(4));
+    Real worstCap = 0.0, worstSwp = 0.0;
+    for (Size i = 0; i < capMkt.size(); ++i) {
+        BOOST_CHECK_SMALL(capMkt[i] - 0.0080, 1e-12);
+        worstCap = std::max(worstCap, std::fabs(capMdl[i] - capMkt[i]) * 1e4);
+    }
+    for (Size i = 0; i < swpMkt.size(); ++i)
+        worstSwp = std::max(worstSwp, std::fabs(swpMdl[i] - swpMkt[i]) * 1e4);
+    BOOST_TEST_MESSAGE("1F rhoInf=1: joint iterations " << QuantLib::ext::any_cast<Real>(add1.at("fmmJointIterations"))
+                                                        << ", converged "
+                                                        << QuantLib::ext::any_cast<bool>(add1.at("fmmJointConverged"))
+                                                        << ", worst caplet residual " << worstCap
+                                                        << " bp, worst swaption residual " << worstSwp << " bp, NPV "
+                                                        << npv1 << ", first caplet time " << capT.front());
+    BOOST_CHECK_EQUAL(QuantLib::ext::any_cast<Real>(add1.at("fmmJointIterations")), 15.0);
+    BOOST_CHECK(!QuantLib::ext::any_cast<bool>(add1.at("fmmJointConverged")));
+    BOOST_CHECK(worstSwp < 0.01);
+    BOOST_CHECK(worstCap > 0.5 && worstCap < 3.0); // structural, about 2 bp on this flat market
+    BOOST_CHECK_CLOSE(QuantLib::ext::any_cast<Real>(add1.at("fmmCapletMaxResidualBp")), worstCap, 1e-6);
+    BOOST_CHECK(npv1 > 0.0);
+
+    // three factors with the default decorrelation: flat 80 / 80 targets are no longer consistent,
+    // the iteration stops at its cap and the irreducible residual is reported, not forced
+    auto factory3 = QuantLib::ext::make_shared<EngineFactory>(
+        fmmEngineData("BermudanSwaption", false, {{"CapFloorBasket", "ATM"}, {"JointMaxIterations", "6"}, {"Tolerance", "0.05"}}),
+        market);
+    auto trade3 = bermudanPayerSwaption(0.031);
+    trade3->build(factory3);
+    const Real npv3 = trade3->instrument()->NPV();
+    const auto& add3 = trade3->instrument()->additionalResults();
+    const Real resid3 = QuantLib::ext::any_cast<Real>(add3.at("fmmCapletMaxResidualBp"));
+    BOOST_TEST_MESSAGE("3F rhoInf=0.6: joint iterations " << QuantLib::ext::any_cast<Real>(add3.at("fmmJointIterations"))
+                                                          << ", converged "
+                                                          << QuantLib::ext::any_cast<bool>(add3.at("fmmJointConverged"))
+                                                          << ", worst caplet residual " << resid3 << " bp, NPV " << npv3);
+    BOOST_CHECK(resid3 >= 0.0);
+    BOOST_CHECK(npv3 > 0.0);
+
+    // XML round trip of the new data fields
+    XMLDocument doc;
+    doc.fromXMLString("<FMM key=\"USD-SOFR\"><CalibrationType>Bootstrap</CalibrationType><CapFloorBasket>ATM</CapFloorBasket>"
+                      "<CapFloorHorizon>3Y</CapFloorHorizon><JointMaxIterations>7</JointMaxIterations>"
+                      "<JointToleranceBp>0.2</JointToleranceBp><Volatility><InitialValue>0.003</InitialValue></Volatility>"
+                      "<CalibrationSwaptions><Expiries>1Y</Expiries><Terms>4Y</Terms></CalibrationSwaptions></FMM>");
+    FmmData data;
+    data.fromXML(doc.getFirstNode("FMM"));
+    BOOST_CHECK_EQUAL(data.capFloorBasket(), "ATM");
+    BOOST_CHECK(data.capFloorHorizon() == 3 * Years);
+    BOOST_CHECK_EQUAL(data.jointMaxIterations(), Size(7));
+    BOOST_CHECK_CLOSE(data.jointToleranceBp(), 0.2, 1e-12);
+    XMLDocument out;
+    FmmData again;
+    again.fromXML(data.toXML(out));
+    BOOST_CHECK_EQUAL(again.capFloorBasket(), "ATM");
+    BOOST_CHECK(again.capFloorHorizon() == 3 * Years);
+    FmmData bad = data;
+    bad.capFloorBasket() = "DealStrike";
+    BOOST_CHECK_THROW(bad.validate(), QuantLib::Error);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

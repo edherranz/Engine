@@ -8,6 +8,7 @@
     <IndexForwardingCurvesId>default</IndexForwardingCurvesId>
     <SwapIndexCurvesId>default</SwapIndexCurvesId>
     <SwaptionVolatilitiesId>default</SwaptionVolatilitiesId>
+    <CapFloorVolatilitiesId>default</CapFloorVolatilitiesId>
   </Configuration>
   <DiscountingCurves id="default">
     <DiscountingCurve currency="USD">Yield/USD/USD-SOFR</DiscountingCurve>
@@ -27,4 +28,7 @@
     <SwaptionVolatility key="USD">SwaptionVolatility/USD-SOFR/USD-SOFR</SwaptionVolatility>
     <SwaptionVolatility key="USD-SOFR">SwaptionVolatility/USD-SOFR/USD-SOFR</SwaptionVolatility>
   </SwaptionVolatilities>
+  <CapFloorVolatilities id="default">
+    <CapFloorVolatility key="USD-SOFR">CapFloorVolatility/USD-SOFR/USD-SOFR</CapFloorVolatility>
+  </CapFloorVolatilities>
 </TodaysMarket>

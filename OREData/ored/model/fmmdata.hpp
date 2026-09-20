@@ -88,6 +88,14 @@ public:
     Period& noticePeriod() { return noticePeriod_; }
     Calendar& noticeCalendar() { return noticeCalendar_; }
     BusinessDayConvention& noticeConvention() { return noticeConvention_; }
+    //! cap/floor (optionlet) calibration basket: "None" or "ATM" (one backward-looking caplet per
+    //! grid period at the period's forward, target vol from the market's stripped optionlet surface
+    //! keyed by the qualifier), fitted jointly with the swaption basket (A3 joint bootstrap)
+    std::string& capFloorBasket() { return capFloorBasket_; }
+    //! last period end included in the cap/floor basket (0D = the whole grid)
+    Period& capFloorHorizon() { return capFloorHorizon_; }
+    Size& jointMaxIterations() { return jointMaxIterations_; }
+    Real& jointToleranceBp() { return jointToleranceBp_; }
     //! contractual dates the model grid must contain (set by engine builders from the trade;
     //! not part of the XML). Empty: the grid is built from the calibration basket dates.
     std::vector<Date>& gridDates() { return gridDates_; }
@@ -113,6 +121,10 @@ private:
     Period noticePeriod_;
     Calendar noticeCalendar_;
     BusinessDayConvention noticeConvention_;
+    std::string capFloorBasket_;
+    Period capFloorHorizon_;
+    Size jointMaxIterations_;
+    Real jointToleranceBp_;
     std::vector<Date> gridDates_;
     mutable std::vector<std::string> optionExpiries_, optionTerms_, optionStrikes_;
 };
