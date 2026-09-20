@@ -1,0 +1,43 @@
+<?xml version="1.0"?>
+<!-- A6 bump-and-revalue configuration: 1 bp absolute shifts, central scheme (symmetric Monte
+     Carlo bump noise), discount and index curve by tenor, swaption normal vols by expiry and term,
+     cap/floor normal vols by expiry and strike. -->
+<SensitivityAnalysis>
+  <DiscountCurves>
+    <DiscountCurve ccy="USD">
+      <ShiftType>Absolute</ShiftType>
+      <ShiftSize>0.0001</ShiftSize>
+      <ShiftScheme>Central</ShiftScheme>
+      <ShiftTenors>3M,6M,9M,1Y,18M,2Y,3Y,4Y,5Y,6Y,7Y,10Y</ShiftTenors>
+    </DiscountCurve>
+  </DiscountCurves>
+  <IndexCurves>
+    <IndexCurve index="USD-SOFR">
+      <ShiftType>Absolute</ShiftType>
+      <ShiftSize>0.0001</ShiftSize>
+      <ShiftScheme>Central</ShiftScheme>
+      <ShiftTenors>3M,6M,9M,1Y,18M,2Y,3Y,4Y,5Y,6Y,7Y,10Y</ShiftTenors>
+    </IndexCurve>
+  </IndexCurves>
+  <SwaptionVolatilities>
+    <SwaptionVolatility key="USD-SOFR">
+      <ShiftType>Absolute</ShiftType>
+      <ShiftSize>0.0001</ShiftSize>
+      <ShiftScheme>Central</ShiftScheme>
+      <ShiftExpiries>1Y,2Y,3Y,4Y,5Y</ShiftExpiries>
+      <ShiftStrikes/>
+      <ShiftTerms>1Y,2Y,3Y,4Y,5Y</ShiftTerms>
+    </SwaptionVolatility>
+  </SwaptionVolatilities>
+  <CapFloorVolatilities>
+    <CapFloorVolatility key="USD-SOFR">
+      <ShiftType>Absolute</ShiftType>
+      <ShiftSize>0.0001</ShiftSize>
+      <ShiftScheme>Central</ShiftScheme>
+      <ShiftExpiries>1Y,2Y,3Y,5Y,7Y</ShiftExpiries>
+      <ShiftStrikes>0.03,0.04,0.05</ShiftStrikes>
+      <Index>USD-SOFR</Index>
+    </CapFloorVolatility>
+  </CapFloorVolatilities>
+  <ComputeGamma>false</ComputeGamma>
+</SensitivityAnalysis>

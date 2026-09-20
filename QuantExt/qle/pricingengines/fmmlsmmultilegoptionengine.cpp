@@ -234,14 +234,28 @@ void FmmLsmMultiLegOptionEngine::calculate() const {
     inst.rights = rights;
 
     FmmLsmPricer pricer(model_, inst, config_.lsm);
-    const FmmLsmResult res = pricer.calculate();
+    FmmLsmResult res;
+    bool reusedPolicy = false;
+    if (config_.policyMode == FmmPolicyMode::Frozen && frozenPolicy_) {
+        // frozen-policy risk: the policy trained by the first valuation, revalued on the same paths
+        res = pricer.valueWithPolicy(*frozenPolicy_, config_.lsm.valuationSeed);
+        reusedPolicy = true;
+    } else {
+        res = pricer.calculate();
+        if (config_.policyMode == FmmPolicyMode::Frozen)
+            frozenPolicy_ = pricer.policy();
+    }
     results_.value = res.lowerBound;
     std::unique_ptr<FmmDualBoundResult> dual;
-    if (config_.dualBound)
+    if (config_.dualBound && !reusedPolicy)
         dual = std::make_unique<FmmDualBoundResult>(
             pricer.dualBound(config_.dualOuterPaths, config_.dualInnerPaths, config_.dualSeed));
     fmmWriteLsmResults(results_.additionalResults, res, dual.get(), config_, *grid_);
     results_.additionalResults["fmmExerciseDates"] = arguments_.exercise->dates();
+    results_.additionalResults["fmmPolicyMode"] =
+        std::string(config_.policyMode == FmmPolicyMode::Frozen
+                        ? (reusedPolicy ? "Frozen (policy of the first valuation reused)" : "Frozen (policy trained)")
+                        : "Retrain");
     results_.additionalResults["fmmSettlementDates"] = usedSettle;
     if (config_.calibrationResults)
         for (const auto& kv : config_.calibrationResults())

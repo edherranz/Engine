@@ -682,6 +682,49 @@ BOOST_AUTO_TEST_CASE(testFmmJointCapFloorSwaptionCalibration) {
     BOOST_CHECK_THROW(bad.validate(), QuantLib::Error);
 }
 
+BOOST_AUTO_TEST_CASE(testFmmPolicyModes) {
+    BOOST_TEST_MESSAGE("Testing the exercise-policy treatment across revaluations (A6): retrained policy vs the "
+                       "policy of the first valuation kept frozen, under a vol bump with recalibration...");
+    Settings::instance().evaluationDate() = kAsof;
+    auto market = QuantLib::ext::make_shared<FmmTestMarket>(kAsof, 0.03, 0.0080);
+    auto retrainData = fmmEngineData("BermudanSwaption", false);
+    auto frozenData = fmmEngineData("BermudanSwaption", false);
+    frozenData->engineParameters("BermudanSwaption")["PolicyMode"] = "Frozen";
+    auto retrainFactory = QuantLib::ext::make_shared<EngineFactory>(retrainData, market);
+    auto frozenFactory = QuantLib::ext::make_shared<EngineFactory>(frozenData, market);
+    auto retrain = bermudanPayerSwaption(0.031);
+    auto frozen = bermudanPayerSwaption(0.031);
+    retrain->build(retrainFactory);
+    frozen->build(frozenFactory);
+    const Real base = retrain->instrument()->NPV();
+    const Real baseFrozen = frozen->instrument()->NPV();
+    BOOST_CHECK_SMALL(base - baseFrozen, 1e-12); // identical first valuation (same seeds)
+    BOOST_CHECK_EQUAL(QuantLib::ext::any_cast<std::string>(frozen->instrument()->additionalResults().at("fmmPolicyMode")),
+                      "Frozen (policy trained)");
+    BOOST_CHECK_EQUAL(QuantLib::ext::any_cast<std::string>(retrain->instrument()->additionalResults().at("fmmPolicyMode")),
+                      "Retrain");
+
+    market->volQuote_->setValue(0.0081); // 1 bp normal vol bump, recalibrated in both runs
+    for (auto& mb : retrainFactory->modelBuilders())
+        mb.second->recalibrate();
+    for (auto& mb : frozenFactory->modelBuilders())
+        mb.second->recalibrate();
+    const Real bumped = retrain->instrument()->NPV();
+    const Real bumpedFrozen = frozen->instrument()->NPV();
+    const Real se = QuantLib::ext::any_cast<Real>(retrain->instrument()->additionalResults().at("fmmLsmLowerBoundStdError"));
+    BOOST_CHECK_EQUAL(QuantLib::ext::any_cast<std::string>(frozen->instrument()->additionalResults().at("fmmPolicyMode")),
+                      "Frozen (policy of the first valuation reused)");
+    BOOST_TEST_MESSAGE("vega (1 bp, paired paths): retrained policy " << bumped - base << ", frozen policy "
+                                                                      << bumpedFrozen - baseFrozen << " (LSM s.e. " << se
+                                                                      << ")");
+    // both vegas are positive and of the same order; the frozen policy is sub-optimal on the bumped
+    // market, so its value cannot exceed the retrained one beyond the (paired, small) noise
+    BOOST_CHECK(bumped > base);
+    BOOST_CHECK(bumpedFrozen > baseFrozen);
+    BOOST_CHECK(bumpedFrozen <= bumped + 0.1 * se);
+    BOOST_CHECK(std::fabs((bumpedFrozen - baseFrozen) - (bumped - base)) < 0.5 * se);
+}
+
 BOOST_AUTO_TEST_SUITE_END()
 
 BOOST_AUTO_TEST_SUITE_END()

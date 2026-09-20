@@ -1,0 +1,49 @@
+<?xml version="1.0"?>
+<!-- USD-SOFR simulation market for the sensitivity runs (A6): the curve, the SOFR swap index
+     family, the swaption cube and the cap/floor surface keyed by the index. -->
+<Simulation>
+  <Market>
+    <BaseCurrency>USD</BaseCurrency>
+    <Currencies>
+      <Currency>USD</Currency>
+    </Currencies>
+    <YieldCurves>
+      <Configuration>
+        <Tenors>3M,6M,9M,1Y,18M,2Y,3Y,4Y,5Y,6Y,7Y,10Y</Tenors>
+        <Interpolation>LogLinear</Interpolation>
+        <Extrapolation>Y</Extrapolation>
+      </Configuration>
+    </YieldCurves>
+    <Indices>
+      <Index>USD-SOFR</Index>
+    </Indices>
+    <SwapIndices>
+      <SwapIndex>
+        <Name>USD-CMS-SOFR-1Y</Name>
+        <DiscountingIndex>USD-SOFR</DiscountingIndex>
+      </SwapIndex>
+      <SwapIndex>
+        <Name>USD-CMS-SOFR-30Y</Name>
+        <DiscountingIndex>USD-SOFR</DiscountingIndex>
+      </SwapIndex>
+    </SwapIndices>
+    <SwaptionVolatilities>
+      <Simulate>true</Simulate>
+      <ReactionToTimeDecay>ForwardVariance</ReactionToTimeDecay>
+      <Keys>
+        <Key>USD-SOFR</Key>
+      </Keys>
+      <Expiries>1Y,2Y,3Y,4Y,5Y,7Y,10Y</Expiries>
+      <Terms>1Y,2Y,3Y,4Y,5Y,7Y,10Y</Terms>
+    </SwaptionVolatilities>
+    <CapFloorVolatilities>
+      <Simulate>true</Simulate>
+      <ReactionToTimeDecay>ForwardVariance</ReactionToTimeDecay>
+      <Keys>
+        <Key>USD-SOFR</Key>
+      </Keys>
+      <Expiries>1Y,2Y,3Y,4Y,5Y,7Y,10Y</Expiries>
+      <Strikes>0.02,0.03,0.04,0.05,0.06</Strikes>
+    </CapFloorVolatilities>
+  </Market>
+</Simulation>

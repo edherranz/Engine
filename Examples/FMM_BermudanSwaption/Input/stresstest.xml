@@ -1,0 +1,96 @@
+<?xml version="1.0"?>
+<!-- Parallel 1 bp bumps per market segment, the first-order reference for the bucket sums of the
+     sensitivity ladders (A6 acceptance 1). -->
+<StressTesting>
+  <UseSpreadedTermStructures>false</UseSpreadedTermStructures>
+  <StressTest id="rates_parallel_up_1bp">
+    <DiscountCurves>
+      <DiscountCurve ccy="USD">
+        <ShiftType>Absolute</ShiftType>
+        <Shifts>0.0001,0.0001,0.0001,0.0001,0.0001,0.0001,0.0001,0.0001,0.0001,0.0001,0.0001,0.0001</Shifts>
+        <ShiftTenors>3M,6M,9M,1Y,18M,2Y,3Y,4Y,5Y,6Y,7Y,10Y</ShiftTenors>
+      </DiscountCurve>
+    </DiscountCurves>
+    <IndexCurves>
+      <IndexCurve index="USD-SOFR">
+        <ShiftType>Absolute</ShiftType>
+        <Shifts>0.0001,0.0001,0.0001,0.0001,0.0001,0.0001,0.0001,0.0001,0.0001,0.0001,0.0001,0.0001</Shifts>
+        <ShiftTenors>3M,6M,9M,1Y,18M,2Y,3Y,4Y,5Y,6Y,7Y,10Y</ShiftTenors>
+      </IndexCurve>
+    </IndexCurves>
+  </StressTest>
+  <StressTest id="rates_parallel_down_1bp">
+    <DiscountCurves>
+      <DiscountCurve ccy="USD">
+        <ShiftType>Absolute</ShiftType>
+        <Shifts>-0.0001,-0.0001,-0.0001,-0.0001,-0.0001,-0.0001,-0.0001,-0.0001,-0.0001,-0.0001,-0.0001,-0.0001</Shifts>
+        <ShiftTenors>3M,6M,9M,1Y,18M,2Y,3Y,4Y,5Y,6Y,7Y,10Y</ShiftTenors>
+      </DiscountCurve>
+    </DiscountCurves>
+    <IndexCurves>
+      <IndexCurve index="USD-SOFR">
+        <ShiftType>Absolute</ShiftType>
+        <Shifts>-0.0001,-0.0001,-0.0001,-0.0001,-0.0001,-0.0001,-0.0001,-0.0001,-0.0001,-0.0001,-0.0001,-0.0001</Shifts>
+        <ShiftTenors>3M,6M,9M,1Y,18M,2Y,3Y,4Y,5Y,6Y,7Y,10Y</ShiftTenors>
+      </IndexCurve>
+    </IndexCurves>
+  </StressTest>
+  <StressTest id="swaptionvol_parallel_up_1bp">
+    <SwaptionVolatilities>
+      <SwaptionVolatility key="USD-SOFR">
+        <ShiftType>Absolute</ShiftType>
+        <Shifts>
+          <Shift>0.0001</Shift>
+        </Shifts>
+        <ShiftExpiries>1Y,2Y,3Y,4Y,5Y</ShiftExpiries>
+        <ShiftTerms>1Y,2Y,3Y,4Y,5Y</ShiftTerms>
+      </SwaptionVolatility>
+    </SwaptionVolatilities>
+  </StressTest>
+  <StressTest id="swaptionvol_parallel_down_1bp">
+    <SwaptionVolatilities>
+      <SwaptionVolatility key="USD-SOFR">
+        <ShiftType>Absolute</ShiftType>
+        <Shifts>
+          <Shift>-0.0001</Shift>
+        </Shifts>
+        <ShiftExpiries>1Y,2Y,3Y,4Y,5Y</ShiftExpiries>
+        <ShiftTerms>1Y,2Y,3Y,4Y,5Y</ShiftTerms>
+      </SwaptionVolatility>
+    </SwaptionVolatilities>
+  </StressTest>
+  <StressTest id="capfloorvol_parallel_up_1bp">
+    <CapFloorVolatilities>
+      <CapFloorVolatility key="USD-SOFR">
+        <ShiftType>Absolute</ShiftType>
+        <Shifts>
+          <Shift tenor="1Y">0.0001</Shift>
+          <Shift tenor="2Y">0.0001</Shift>
+          <Shift tenor="3Y">0.0001</Shift>
+          <Shift tenor="5Y">0.0001</Shift>
+          <Shift tenor="7Y">0.0001</Shift>
+        </Shifts>
+        <ShiftExpiries>1Y,2Y,3Y,5Y,7Y</ShiftExpiries>
+        <ShiftStrikes/>
+        <Index>USD-SOFR</Index>
+      </CapFloorVolatility>
+    </CapFloorVolatilities>
+  </StressTest>
+  <StressTest id="capfloorvol_parallel_down_1bp">
+    <CapFloorVolatilities>
+      <CapFloorVolatility key="USD-SOFR">
+        <ShiftType>Absolute</ShiftType>
+        <Shifts>
+          <Shift tenor="1Y">-0.0001</Shift>
+          <Shift tenor="2Y">-0.0001</Shift>
+          <Shift tenor="3Y">-0.0001</Shift>
+          <Shift tenor="5Y">-0.0001</Shift>
+          <Shift tenor="7Y">-0.0001</Shift>
+        </Shifts>
+        <ShiftExpiries>1Y,2Y,3Y,5Y,7Y</ShiftExpiries>
+        <ShiftStrikes/>
+        <Index>USD-SOFR</Index>
+      </CapFloorVolatility>
+    </CapFloorVolatilities>
+  </StressTest>
+</StressTesting>

@@ -139,6 +139,13 @@ FmmBuilder::FmmBuilder(const QuantLib::ext::shared_ptr<ore::data::Market>& marke
                      "FMM", id),
       setCalibrationInfo_(setCalibrationInfo) {
     data->validate();
+    // the joint calibration also depends on the optionlet surface: observe it so that cap/floor
+    // volatility scenarios trigger a recalibration (A6)
+    if (data->capFloorBasket() == "ATM") {
+        auto ovs = market->capFloorVol(data->qualifier(), configuration);
+        if (!ovs.empty())
+            marketObserver_->addObservable(*ovs);
+    }
 }
 
 QuantLib::ext::shared_ptr<ForwardMarketModel> FmmBuilder::modelAsFmm() const {

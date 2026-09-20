@@ -122,11 +122,19 @@ void FmmLsmCallableBondEngine::calculate() const {
     Real issuerValue = issuerStraight;
     std::unique_ptr<FmmLsmResult> res;
     std::unique_ptr<FmmDualBoundResult> dual;
+    bool reusedPolicy = false;
     if (!inst.rights.empty()) {
         FmmLsmPricer pricer(model_, inst, config_.lsm);
-        res = std::make_unique<FmmLsmResult>(pricer.calculate());
+        if (config_.policyMode == FmmPolicyMode::Frozen && frozenPolicy_) {
+            res = std::make_unique<FmmLsmResult>(pricer.valueWithPolicy(*frozenPolicy_, config_.lsm.valuationSeed));
+            reusedPolicy = true;
+        } else {
+            res = std::make_unique<FmmLsmResult>(pricer.calculate());
+            if (config_.policyMode == FmmPolicyMode::Frozen)
+                frozenPolicy_ = pricer.policy();
+        }
         issuerValue = res->lowerBoundCv; // control variate on the known straight-bond value
-        if (config_.dualBound)
+        if (config_.dualBound && !reusedPolicy)
             dual = std::make_unique<FmmDualBoundResult>(
                 pricer.dualBound(config_.dualOuterPaths, config_.dualInnerPaths, config_.dualSeed));
     }
@@ -138,6 +146,10 @@ void FmmLsmCallableBondEngine::calculate() const {
     results_.additionalResults["callPutValue"] = -issuerStraight - results_.value;
     results_.additionalResults["fmmIssuerSpread"] = spread;
     results_.additionalResults["fmmNoticeDates"] = noticeDates;
+    results_.additionalResults["fmmPolicyMode"] =
+        std::string(config_.policyMode == FmmPolicyMode::Frozen
+                        ? (reusedPolicy ? "Frozen (policy of the first valuation reused)" : "Frozen (policy trained)")
+                        : "Retrain");
     if (res) {
         fmmWriteLsmResults(results_.additionalResults, *res, dual.get(), config_, *grid_);
         // for the Cancel-style issuer instrument the reported bounds are the control-variate ones

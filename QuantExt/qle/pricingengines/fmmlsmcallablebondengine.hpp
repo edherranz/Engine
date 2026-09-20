@@ -30,6 +30,8 @@
 #include <qle/instruments/callablebond.hpp>
 #include <qle/pricingengines/fmmlsmmultilegoptionengine.hpp>
 
+#include <ql/optional.hpp>
+
 #include <ql/quote.hpp>
 #include <ql/termstructures/defaulttermstructure.hpp>
 
@@ -49,6 +51,7 @@ private:
     QuantLib::ext::shared_ptr<ForwardMarketModel> model_;
     QuantLib::ext::shared_ptr<FmmGrid> grid_;
     FmmLsmEngineConfig config_;
+    mutable QuantLib::ext::optional<FmmLsmPolicy> frozenPolicy_;
     Handle<YieldTermStructure> referenceCurve_;
     Handle<Quote> discountingSpread_;
     Handle<DefaultProbabilityTermStructure> creditCurve_;

@@ -32,6 +32,7 @@
 #include <qle/models/fmmlsmpricer.hpp>
 
 #include <ql/any.hpp>
+#include <ql/optional.hpp>
 #include <ql/patterns/observable.hpp>
 
 #include <functional>
@@ -39,9 +40,15 @@
 
 namespace QuantExt {
 
+//! exercise-policy treatment across revaluations (A6): retrain the LSM policy on every valuation
+//! (retrained-policy risk) or keep the policy trained by the first valuation and only revalue
+//! it on the same valuation paths (frozen-policy risk, paired common random numbers)
+enum class FmmPolicyMode { Retrain, Frozen };
+
 //! LSM engine configuration shared by the FMM trade engines
 struct FmmLsmEngineConfig {
     FmmLsmConfig lsm;
+    FmmPolicyMode policyMode = FmmPolicyMode::Retrain;
     bool dualBound = false; //!< also run the Andersen-Broadie dual bound (nested simulation)
     Size dualOuterPaths = 512, dualInnerPaths = 64;
     BigNatural dualSeed = 20260920;
@@ -79,6 +86,7 @@ private:
     QuantLib::ext::shared_ptr<ForwardMarketModel> model_;
     QuantLib::ext::shared_ptr<FmmGrid> grid_;
     FmmLsmEngineConfig config_;
+    mutable QuantLib::ext::optional<FmmLsmPolicy> frozenPolicy_;
 };
 
 //! writes the LSM statistics into an additional-results map under fmm* keys

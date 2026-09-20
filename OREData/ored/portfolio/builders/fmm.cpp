@@ -144,6 +144,10 @@ QuantExt::FmmLsmEngineConfig fmmLsmEngineConfig(const EngineBuilder* builder,
     cfg.dualOuterPaths = static_cast<Size>(parseInteger(builder->engineParameter("DualOuterPaths", {}, false, "512")));
     cfg.dualInnerPaths = static_cast<Size>(parseInteger(builder->engineParameter("DualInnerPaths", {}, false, "64")));
     cfg.dualSeed = static_cast<BigNatural>(parseInteger(builder->engineParameter("DualSeed", {}, false, "20260920")));
+    const std::string policyMode = builder->engineParameter("PolicyMode", {}, false, "Retrain");
+    QL_REQUIRE(policyMode == "Retrain" || policyMode == "Frozen",
+               "FMM engine parameter PolicyMode must be Retrain or Frozen, got " << policyMode);
+    cfg.policyMode = policyMode == "Frozen" ? FmmPolicyMode::Frozen : FmmPolicyMode::Retrain;
     cfg.gridToleranceDays =
         static_cast<Natural>(parseInteger(builder->modelParameter("GridToleranceDays", {}, false, "3")));
     cfg.observables = {fmmBuilder->irModel()};
