@@ -1,0 +1,214 @@
+#TradeId,ResultId,ResultType,ResultValue
+FMM_CALLABLE_BOND_USD_4.5_2030,PricingConfigEngine,string,FD
+FMM_CALLABLE_BOND_USD_4.5_2030,PricingConfigModel,string,LGM
+FMM_CALLABLE_BOND_USD_4.5_2030,PricingConfigProductType,string,CallableBond
+FMM_CALLABLE_BOND_USD_4.5_2030,isdaAssetClass,string,Credit
+FMM_CALLABLE_BOND_USD_4.5_2030,isdaBaseProduct,string,
+FMM_CALLABLE_BOND_USD_4.5_2030,isdaSubProduct,string,
+FMM_CALLABLE_BOND_USD_4.5_2030,isdaTransaction,string,
+FMM_CALLABLE_BOND_USD_4.5_2030,callPutValue,double,288502.064807144925
+FMM_CALLABLE_BOND_USD_4.5_2030,cashFlowResults[0],cashflows,226249.999999998952  @ 2025-08-11
+FMM_CALLABLE_BOND_USD_4.5_2030,cashFlowResults[1],cashflows,223750.000000000349  @ 2026-02-10
+FMM_CALLABLE_BOND_USD_4.5_2030,cashFlowResults[2],cashflows,224999.999999999651  @ 2026-08-10
+FMM_CALLABLE_BOND_USD_4.5_2030,cashFlowResults[3],cashflows,224999.999999999651  @ 2027-02-10
+FMM_CALLABLE_BOND_USD_4.5_2030,cashFlowResults[4],cashflows,224999.999999999651  @ 2027-08-10
+FMM_CALLABLE_BOND_USD_4.5_2030,cashFlowResults[5],cashflows,224999.999999999651  @ 2028-02-10
+FMM_CALLABLE_BOND_USD_4.5_2030,cashFlowResults[6],cashflows,224999.999999999651  @ 2028-08-10
+FMM_CALLABLE_BOND_USD_4.5_2030,cashFlowResults[7],cashflows,227500.000000000466  @ 2029-02-12
+FMM_CALLABLE_BOND_USD_4.5_2030,cashFlowResults[8],cashflows,222500.000000001019  @ 2029-08-10
+FMM_CALLABLE_BOND_USD_4.5_2030,cashFlowResults[9],cashflows,226249.999999998952  @ 2030-02-11
+FMM_CALLABLE_BOND_USD_4.5_2030,cashFlowResults[10],cashflows,10000000.000000000000  @ 2030-02-11
+FMM_CALLABLE_BOND_USD_4.5_2030,event_0000!,string,|time        |date        |notional    |accrual     |flow        |call        |put         |refDsc      |survProb    |secSprdDsc  |effDsc      |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00000,string,|0           |2025-02-10  |1e+07       |0           |            |            |            |1           |1           |1           |1           |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00001,string,|0.0415525   |            |1e+07       |18854.2     |            |            |            |0.99806     |1           |1           |0.99806     |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00002,string,|0.083105    |            |1e+07       |37708.3     |            |            |            |0.996117    |1           |1           |0.996117    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00003,string,|0.124658    |            |1e+07       |56562.5     |            |            |            |0.994495    |1           |1           |0.994495    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00004,string,|0.16621     |            |1e+07       |75416.7     |            |            |            |0.993124    |1           |1           |0.993124    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00005,string,|0.207763    |            |1e+07       |94270.8     |            |            |            |0.991648    |1           |1           |0.991648    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00006,string,|0.249315    |            |1e+07       |113125      |            |            |            |0.990131    |1           |1           |0.990131    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00007,string,|0.290868    |            |1e+07       |131979      |            |            |            |0.988437    |1           |1           |0.988437    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00008,string,|0.33242     |            |1e+07       |150833      |            |            |            |0.986484    |1           |1           |0.986484    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00009,string,|0.373973    |            |1e+07       |169687      |            |            |            |0.98452     |1           |1           |0.98452     |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00010,string,|0.415525    |            |1e+07       |188542      |            |            |            |0.982547    |1           |1           |0.982547    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00011,string,|0.457078    |            |1e+07       |207396      |            |            |            |0.98073     |1           |1           |0.98073     |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00012,string,|0.49863     |2025-08-11  |1e+07       |0           |226250      |            |            |0.978977    |1           |1           |0.978977    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00013,string,|0.540411    |            |1e+07       |18645.8     |            |            |            |0.977442    |1           |1           |0.977442    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00014,string,|0.582192    |            |1e+07       |37291.7     |            |            |            |0.976232    |1           |1           |0.976232    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00015,string,|0.623973    |            |1e+07       |55937.5     |            |            |            |0.974279    |1           |1           |0.974279    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00016,string,|0.665753    |            |1e+07       |74583.3     |            |            |            |0.971777    |1           |1           |0.971777    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00017,string,|0.707534    |            |1e+07       |93229.2     |            |            |            |0.970028    |1           |1           |0.970028    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00018,string,|0.749315    |            |1e+07       |111875      |            |            |            |0.968547    |1           |1           |0.968547    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00019,string,|0.791096    |            |1e+07       |130521      |            |            |            |0.967069    |1           |1           |0.967069    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00020,string,|0.832877    |            |1e+07       |149167      |            |            |            |0.965593    |1           |1           |0.965593    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00021,string,|0.874658    |            |1e+07       |167813      |            |            |            |0.964017    |1           |1           |0.964017    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00022,string,|0.916438    |            |1e+07       |186458      |            |            |            |0.962377    |1           |1           |0.962377    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00023,string,|0.958219    |            |1e+07       |205104      |            |            |            |0.96074     |1           |1           |0.96074     |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00024,string,|1           |2026-02-10  |1e+07       |0           |223750      |@1          |            |0.959106    |1           |1           |0.959106    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00025,string,|1.04132     |            |1e+07       |18750       |            |            |            |0.957493    |1           |1           |0.957493    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00026,string,|1.08265     |            |1e+07       |37500       |            |            |            |0.955882    |1           |1           |0.955882    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00027,string,|1.12397     |            |1e+07       |56250       |            |            |            |0.954302    |1           |1           |0.954302    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00028,string,|1.1653      |            |1e+07       |75000       |            |            |            |0.952741    |1           |1           |0.952741    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00029,string,|1.20662     |            |1e+07       |93750       |            |            |            |0.951183    |1           |1           |0.951183    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00030,string,|1.24795     |            |1e+07       |112500      |            |            |            |0.949627    |1           |1           |0.949627    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00031,string,|1.28927     |            |1e+07       |131250      |            |            |            |0.948074    |1           |1           |0.948074    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00032,string,|1.33059     |            |1e+07       |150000      |            |            |            |0.946524    |1           |1           |0.946524    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00033,string,|1.37192     |            |1e+07       |168750      |            |            |            |0.944973    |1           |1           |0.944973    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00034,string,|1.41324     |            |1e+07       |187500      |            |            |            |0.943422    |1           |1           |0.943422    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00035,string,|1.45457     |            |1e+07       |206250      |            |            |            |0.941873    |1           |1           |0.941873    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00036,string,|1.49589     |2026-08-10  |1e+07       |0           |225000      |@1          |            |0.940327    |1           |1           |0.940327    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00037,string,|1.5379      |            |1e+07       |18750       |            |            |            |0.938758    |1           |1           |0.938758    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00038,string,|1.57991     |            |1e+07       |37500       |            |            |            |0.937192    |1           |1           |0.937192    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00039,string,|1.62192     |            |1e+07       |56250       |            |            |            |0.935628    |1           |1           |0.935628    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00040,string,|1.66393     |            |1e+07       |75000       |            |            |            |0.934067    |1           |1           |0.934067    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00041,string,|1.70594     |            |1e+07       |93750       |            |            |            |0.932508    |1           |1           |0.932508    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00042,string,|1.74795     |            |1e+07       |112500      |            |            |            |0.930952    |1           |1           |0.930952    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00043,string,|1.78995     |            |1e+07       |131250      |            |            |            |0.929399    |1           |1           |0.929399    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00044,string,|1.83196     |            |1e+07       |150000      |            |            |            |0.927848    |1           |1           |0.927848    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00045,string,|1.87397     |            |1e+07       |168750      |            |            |            |0.9263      |1           |1           |0.9263      |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00046,string,|1.91598     |            |1e+07       |187500      |            |            |            |0.924754    |1           |1           |0.924754    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00047,string,|1.95799     |            |1e+07       |206250      |            |            |            |0.923211    |1           |1           |0.923211    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00048,string,|2           |2027-02-10  |1e+07       |0           |225000      |@1          |            |0.921671    |1           |1           |0.921671    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00049,string,|2.04132     |            |1e+07       |18750       |            |            |            |0.920154    |1           |1           |0.920154    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00050,string,|2.08265     |            |1e+07       |37500       |            |            |            |0.918638    |1           |1           |0.918638    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00051,string,|2.12397     |            |1e+07       |56250       |            |            |            |0.917125    |1           |1           |0.917125    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00052,string,|2.1653      |            |1e+07       |75000       |            |            |            |0.915614    |1           |1           |0.915614    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00053,string,|2.20662     |            |1e+07       |93750       |            |            |            |0.914106    |1           |1           |0.914106    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00054,string,|2.24795     |            |1e+07       |112500      |            |            |            |0.912601    |1           |1           |0.912601    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00055,string,|2.28927     |            |1e+07       |131250      |            |            |            |0.911097    |1           |1           |0.911097    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00056,string,|2.33059     |            |1e+07       |150000      |            |            |            |0.909597    |1           |1           |0.909597    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00057,string,|2.37192     |            |1e+07       |168750      |            |            |            |0.908099    |1           |1           |0.908099    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00058,string,|2.41324     |            |1e+07       |187500      |            |            |            |0.906603    |1           |1           |0.906603    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00059,string,|2.45457     |            |1e+07       |206250      |            |            |            |0.90511     |1           |1           |0.90511     |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00060,string,|2.49589     |2027-08-10  |1e+07       |0           |225000      |@1          |            |0.903619    |1           |1           |0.903619    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00061,string,|2.5379      |            |1e+07       |18750       |            |            |            |0.902106    |1           |1           |0.902106    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00062,string,|2.57991     |            |1e+07       |37500       |            |            |            |0.900595    |1           |1           |0.900595    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00063,string,|2.62192     |            |1e+07       |56250       |            |            |            |0.899087    |1           |1           |0.899087    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00064,string,|2.66393     |            |1e+07       |75000       |            |            |            |0.897582    |1           |1           |0.897582    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00065,string,|2.70594     |            |1e+07       |93750       |            |            |            |0.896079    |1           |1           |0.896079    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00066,string,|2.74795     |            |1e+07       |112500      |            |            |            |0.894579    |1           |1           |0.894579    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00067,string,|2.78995     |            |1e+07       |131250      |            |            |            |0.893081    |1           |1           |0.893081    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00068,string,|2.83196     |            |1e+07       |150000      |            |            |            |0.891585    |1           |1           |0.891585    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00069,string,|2.87397     |            |1e+07       |168750      |            |            |            |0.890093    |1           |1           |0.890093    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00070,string,|2.91598     |            |1e+07       |187500      |            |            |            |0.888602    |1           |1           |0.888602    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00071,string,|2.95799     |            |1e+07       |206250      |            |            |            |0.887114    |1           |1           |0.887114    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00072,string,|3           |2028-02-10  |1e+07       |0           |225000      |@1          |            |0.885629    |1           |1           |0.885629    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00073,string,|3.04155     |            |1e+07       |18750       |            |            |            |0.884187    |1           |1           |0.884187    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00074,string,|3.08311     |            |1e+07       |37500       |            |            |            |0.882757    |1           |1           |0.882757    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00075,string,|3.12466     |            |1e+07       |56250       |            |            |            |0.881328    |1           |1           |0.881328    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00076,string,|3.16621     |            |1e+07       |75000       |            |            |            |0.879903    |1           |1           |0.879903    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00077,string,|3.20776     |            |1e+07       |93750       |            |            |            |0.878479    |1           |1           |0.878479    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00078,string,|3.24932     |            |1e+07       |112500      |            |            |            |0.877058    |1           |1           |0.877058    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00079,string,|3.29087     |            |1e+07       |131250      |            |            |            |0.875639    |1           |1           |0.875639    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00080,string,|3.33242     |            |1e+07       |150000      |            |            |            |0.874222    |1           |1           |0.874222    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00081,string,|3.37397     |            |1e+07       |168750      |            |            |            |0.872808    |1           |1           |0.872808    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00082,string,|3.41553     |            |1e+07       |187500      |            |            |            |0.871395    |1           |1           |0.871395    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00083,string,|3.45708     |            |1e+07       |206250      |            |            |            |0.869986    |1           |1           |0.869986    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00084,string,|3.49863     |2028-08-10  |1e+07       |0           |225000      |@1          |            |0.868578    |1           |1           |0.868578    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00085,string,|3.5411      |            |1e+07       |18958.3     |            |            |            |0.867142    |1           |1           |0.867142    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00086,string,|3.58356     |            |1e+07       |37916.7     |            |            |            |0.865708    |1           |1           |0.865708    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00087,string,|3.62603     |            |1e+07       |56875       |            |            |            |0.864277    |1           |1           |0.864277    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00088,string,|3.66849     |            |1e+07       |75833.3     |            |            |            |0.862848    |1           |1           |0.862848    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00089,string,|3.71096     |            |1e+07       |94791.7     |            |            |            |0.861421    |1           |1           |0.861421    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00090,string,|3.75342     |            |1e+07       |113750      |            |            |            |0.859997    |1           |1           |0.859997    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00091,string,|3.79589     |            |1e+07       |132708      |            |            |            |0.858575    |1           |1           |0.858575    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00092,string,|3.83836     |            |1e+07       |151667      |            |            |            |0.857155    |1           |1           |0.857155    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00093,string,|3.88082     |            |1e+07       |170625      |            |            |            |0.855738    |1           |1           |0.855738    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00094,string,|3.92329     |            |1e+07       |189583      |            |            |            |0.854323    |1           |1           |0.854323    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00095,string,|3.96575     |            |1e+07       |208542      |            |            |            |0.85291     |1           |1           |0.85291     |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00096,string,|4.00822     |2029-02-12  |1e+07       |0           |227500      |@1          |            |0.8515      |1           |1           |0.8515      |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00097,string,|4.04909     |            |1e+07       |18541.7     |            |            |            |0.85008     |1           |1           |0.85008     |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00098,string,|4.08995     |            |1e+07       |37083.3     |            |            |            |0.848652    |1           |1           |0.848652    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00099,string,|4.13082     |            |1e+07       |55625       |            |            |            |0.847227    |1           |1           |0.847227    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00100,string,|4.17169     |            |1e+07       |74166.7     |            |            |            |0.845804    |1           |1           |0.845804    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00101,string,|4.21256     |            |1e+07       |92708.3     |            |            |            |0.844383    |1           |1           |0.844383    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00102,string,|4.25342     |            |1e+07       |111250      |            |            |            |0.842965    |1           |1           |0.842965    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00103,string,|4.29429     |            |1e+07       |129792      |            |            |            |0.841549    |1           |1           |0.841549    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00104,string,|4.33516     |            |1e+07       |148333      |            |            |            |0.840135    |1           |1           |0.840135    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00105,string,|4.37603     |            |1e+07       |166875      |            |            |            |0.838724    |1           |1           |0.838724    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00106,string,|4.41689     |            |1e+07       |185417      |            |            |            |0.837315    |1           |1           |0.837315    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00107,string,|4.45776     |            |1e+07       |203958      |            |            |            |0.835909    |1           |1           |0.835909    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00108,string,|4.49863     |2029-08-10  |1e+07       |0           |222500      |@1          |            |0.834505    |1           |1           |0.834505    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00109,string,|4.54087     |            |1e+07       |18854.2     |            |            |            |0.833056    |1           |1           |0.833056    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00110,string,|4.58311     |            |1e+07       |37708.3     |            |            |            |0.83161     |1           |1           |0.83161     |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00111,string,|4.62534     |            |1e+07       |56562.5     |            |            |            |0.830167    |1           |1           |0.830167    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00112,string,|4.66758     |            |1e+07       |75416.7     |            |            |            |0.828726    |1           |1           |0.828726    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00113,string,|4.70982     |            |1e+07       |94270.8     |            |            |            |0.827287    |1           |1           |0.827287    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00114,string,|4.75205     |            |1e+07       |113125      |            |            |            |0.825851    |1           |1           |0.825851    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00115,string,|4.79429     |            |1e+07       |131979      |            |            |            |0.824417    |1           |1           |0.824417    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00116,string,|4.83653     |            |1e+07       |150833      |            |            |            |0.822986    |1           |1           |0.822986    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00117,string,|4.87877     |            |1e+07       |169687      |            |            |            |0.821558    |1           |1           |0.821558    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00118,string,|4.921       |            |1e+07       |188542      |            |            |            |0.820131    |1           |1           |0.820131    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00119,string,|4.96324     |            |1e+07       |207396      |            |            |            |0.818708    |1           |1           |0.818708    |
+FMM_CALLABLE_BOND_USD_4.5_2030,event_00120,string,|5.00548     |2030-02-11  |1e+07       |0           |1.02262e+07 |            |            |0.817286    |1           |1           |0.817286    |
+FMM_CALLABLE_BOND_USD_4.5_2030,instMultiplier,double,1.000000000000
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationBasketAnnuities[0],double,3.529191292668
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationBasketAnnuities[1],double,2.594719293123
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationBasketAnnuities[2],double,1.696789902800
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationBasketAnnuities[3],double,0.826367416868
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationBasketAtmForwards[0],double,0.040184778806
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationBasketAtmForwards[1],double,0.040229614542
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationBasketAtmForwards[2],double,0.040277544886
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationBasketAtmForwards[3],double,0.041402650970
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationBasketExpiryTimes[0],double,1.000000000000
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationBasketExpiryTimes[1],double,2.000000000000
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationBasketExpiryTimes[2],double,3.000000000000
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationBasketExpiryTimes[3],double,4.008219178082
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationBasketStrikes[0],double,
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationBasketStrikes[1],double,
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationBasketStrikes[2],double,
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationBasketStrikes[3],double,
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationBasketSwapLengths[0],double,4.000000000000
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationBasketSwapLengths[1],double,3.000000000000
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationBasketSwapLengths[2],double,2.000000000000
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationBasketSwapLengths[3],double,1.000000000000
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationBasketVegas[0],double,1.407943622270
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationBasketVegas[1],double,1.463913597410
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationBasketVegas[2],double,1.172461968599
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationBasketVegas[3],double,0.660022865914
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationBasketVols[0],double,0.010290150000
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationBasketVols[1],double,0.010503880000
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationBasketVols[2],double,0.010534980000
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationBasketVols[3],double,0.010450070000
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationError,double,0.000000000000
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationMarketValues[0],double,0.014487951065
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationMarketValues[1],double,0.015376772758
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationMarketValues[2],double,0.012351863390
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationMarketValues[3],double,0.006897285150
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationMarketVols[0],double,0.010290150000
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationMarketVols[1],double,0.010503880000
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationMarketVols[2],double,0.010534980000
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationMarketVols[3],double,0.010450070000
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationModelAlphas[0],double,0.010635537225
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationModelAlphas[1],double,0.011298113112
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationModelAlphas[2],double,0.011410166439
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationModelAlphas[3],double,0.011155051948
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationModelHwSigmas[0],double,0.010424960327
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationModelHwSigmas[1],double,0.010855129471
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationModelHwSigmas[2],double,0.010745711566
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationModelHwSigmas[3],double,0.010295738803
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationModelKappas[0],double,0.020000000000
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationModelKappas[1],double,0.020000000000
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationModelKappas[2],double,0.020000000000
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationModelKappas[3],double,0.020000000000
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationModelMarketValueDiffs[0],double,0.000000000000
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationModelMarketValueDiffs[1],double,0.000000000000
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationModelMarketValueDiffs[2],double,0.000000000000
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationModelMarketValueDiffs[3],double,0.000000000000
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationModelMarketVolDiffs[0],double,0.000000000000
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationModelMarketVolDiffs[1],double,0.000000000000
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationModelMarketVolDiffs[2],double,0.000000000000
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationModelMarketVolDiffs[3],double,0.000000000000
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationModelValues[0],double,0.014487951065
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationModelValues[1],double,0.015376772758
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationModelValues[2],double,0.012351863390
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationModelValues[3],double,0.006897285150
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationModelVols[0],double,0.010290150000
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationModelVols[1],double,0.010503880000
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationModelVols[2],double,0.010534980000
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationModelVols[3],double,0.010450070000
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationTimes[0],double,1.000000000000
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationTimes[1],double,2.000000000000
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationTimes[2],double,3.000000000000
+FMM_CALLABLE_BOND_USD_4.5_2030,lgmCalibrationTimes[3],double,4.008219178082
+FMM_CALLABLE_BOND_USD_4.5_2030,strippedBondNpv,double,10190091.571433143690
+FMM_CALLABLE_BOND_USD_4.5_2030,strippedBondSettlementValue,double,10192633.983367240056

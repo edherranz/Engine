@@ -1,0 +1,2 @@
+#TradeId,TradeType,Maturity,MaturityTime,NPV,NpvCurrency,NPV(Base),BaseCurrency,Notional,NotionalCurrency,Notional(Base),NettingSet,CounterParty
+FMM_BERMUDAN_PAYER_USD_SOFR_5Y,Swaption,2031-02-12,6.005479,256406.101824,USD,256406.101824,USD,10000000.00,USD,10000000.00,NS,CPTY

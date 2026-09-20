@@ -35,6 +35,8 @@ def get_list_of_new_examples():
             "CurveBuilding",
             "Exposure",
             "ExposureWithCollateral",
+            "FMM_BermudanSwaption",
+            "FMM_CallableBond",
             "InitialMargin",
             "MarketRisk",
             "MinimalSetup",

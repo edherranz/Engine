@@ -197,8 +197,14 @@ QuantLib::ext::shared_ptr<QuantExt::PricingEngine> FmmLsmCallableBondEngineBuild
 
     Handle<YieldTermStructure> referenceCurve = market_->yieldCurve(referenceCurveId, marketConfig);
     Handle<Quote> spread;
-    if (!securityId.empty())
-        spread = market_->securitySpread(securityId, marketConfig);
+    if (!securityId.empty()) {
+        try {
+            spread = market_->securitySpread(securityId, marketConfig);
+        } catch (const std::exception& e) {
+            DLOG("FmmLsmCallableBondEngineBuilder: no security spread for " << securityId << " (" << e.what()
+                                                                              << "), pricing without spread");
+        }
+    }
     Handle<DefaultProbabilityTermStructure> creditCurve;
     if (!creditCurveId.empty())
         creditCurve = market_->defaultCurve(creditCurveId, marketConfig)->curve(); // rejected by the engine
