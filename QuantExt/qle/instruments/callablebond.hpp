@@ -45,6 +45,9 @@ public:
         Real price;
         PriceType priceType;
         bool includeAccrual;
+        //! decision (notice) date; empty = the exercise date. ORE's CallData NoticePeriod sets it;
+        //! engines without notice support decide on the exercise date
+        Date noticeDate = Date();
     };
 
     /* callData, putData must be sorted w.r.t. their event dates */

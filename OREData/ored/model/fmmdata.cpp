@@ -17,6 +17,8 @@
 */
 
 #include <ored/model/fmmdata.hpp>
+
+#include <ql/time/calendars/nullcalendar.hpp>
 #include <ored/utilities/log.hpp>
 #include <ored/utilities/parsers.hpp>
 #include <ored/utilities/to_string.hpp>
@@ -81,6 +83,9 @@ void FmmData::reset() {
     volTimes_ = {};
     volValues_ = {0.0025};
     approx_ = QuantExt::FmmSwaptionApproxMethod::EffectiveShift;
+    noticePeriod_ = 0 * Days;
+    noticeCalendar_ = NullCalendar();
+    noticeConvention_ = Preceding;
     mc_ = McCorrection();
     subSteps_ = 1;
     gridToleranceDays_ = 3;
@@ -150,6 +155,9 @@ void FmmData::fromXML(XMLNode* node) {
 
     subSteps_ = static_cast<Size>(XMLUtils::getChildValueAsInt(node, "SubSteps", false, 1));
     gridToleranceDays_ = static_cast<Natural>(XMLUtils::getChildValueAsInt(node, "GridToleranceDays", false, 3));
+    noticePeriod_ = parsePeriod(XMLUtils::getChildValue(node, "NoticePeriod", false, "0D"));
+    noticeCalendar_ = parseCalendar(XMLUtils::getChildValue(node, "NoticeCalendar", false, "NullCalendar"));
+    noticeConvention_ = parseBusinessDayConvention(XMLUtils::getChildValue(node, "NoticeConvention", false, "Preceding"));
 
     if (XMLNode* optionsNode = XMLUtils::getChildNode(node, "CalibrationSwaptions")) {
         optionExpiries() = XMLUtils::getChildrenValuesAsStrings(optionsNode, "Expiries", false);
@@ -194,6 +202,11 @@ XMLNode* FmmData::toXML(XMLDocument& doc) const {
     XMLUtils::addChild(doc, mcNode, "ToleranceBp", mc_.toleranceBp);
     XMLUtils::addChild(doc, node, "SubSteps", static_cast<int>(subSteps_));
     XMLUtils::addChild(doc, node, "GridToleranceDays", static_cast<int>(gridToleranceDays_));
+    if (noticePeriod_.length() > 0) {
+        XMLUtils::addChild(doc, node, "NoticePeriod", ore::data::to_string(noticePeriod_));
+        XMLUtils::addChild(doc, node, "NoticeCalendar", noticeCalendar_.name());
+        XMLUtils::addChild(doc, node, "NoticeConvention", ore::data::to_string(noticeConvention_));
+    }
     XMLNode* calibrationSwaptionsNode = XMLUtils::addChild(doc, node, "CalibrationSwaptions");
     XMLUtils::addGenericChildAsList(doc, calibrationSwaptionsNode, "Expiries", optionExpiries());
     XMLUtils::addGenericChildAsList(doc, calibrationSwaptionsNode, "Terms", optionTerms());

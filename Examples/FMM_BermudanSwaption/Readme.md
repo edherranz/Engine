@@ -10,6 +10,8 @@ deal-strike swaptions, bootstrap):
   `Output/npv.csv` and `Output/additional_results.csv` (`fmm*` keys: calibration table,
   exercise probabilities, lower / upper bound, duality gap, grid diagnostics).
 - `Input/ore_lgm.xml`: ORE's LGM grid engine, output in `Output_LGM`.
+- `Input/ore_atm.xml`: the FMM again with the `CoterminalATM` calibration strategy (the basket
+  struck at the forward swap rates instead of the deal strike), output in `Output_ATM`.
 
 Market inputs (quotes, curve configuration, conventions) are those of `Examples/Products`;
 `Input/todaysmarket.xml` only selects the USD-SOFR curve, the SOFR swap index family and the

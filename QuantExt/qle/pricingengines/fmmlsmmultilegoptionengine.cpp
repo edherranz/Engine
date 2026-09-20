@@ -168,8 +168,6 @@ void FmmLsmMultiLegOptionEngine::calculate() const {
     QL_REQUIRE(arguments_.settlementType == Settlement::Physical,
                "FmmLsmMultiLegOptionEngine: physical settlement only (cash settlement is not supported)");
     QL_REQUIRE(!arguments_.midCouponExercise, "FmmLsmMultiLegOptionEngine: mid-coupon exercise is not supported");
-    QL_REQUIRE(arguments_.noticePeriod == 0 * Days,
-               "FmmLsmMultiLegOptionEngine: notice periods are not supported for swaptions in this release");
 
     // flows from the OPTION HOLDER's view: receive legs with payer = false, pay legs with payer = true
     FmmCallableInstrument inst;
@@ -196,19 +194,32 @@ void FmmLsmMultiLegOptionEngine::calculate() const {
     // exercise dates -> rights; every exercise date must be a grid date at which all legs have an
     // accrual boundary, i.e. no coupon straddles it (checked through the flow mapping: a coupon
     // with accrual start before and pay date after an exercise date would be mis-assigned)
-    for (const Date& d : arguments_.exercise->dates()) {
-        if (d <= today)
+    // ORE passes the notice dates as the exercise dates and the settlement (swap entry) dates
+    // alongside: a right decides at the notice grid date and enters the flows after the settlement
+    // grid date (A4 notice-period rights, adapted payoff in the dual bound)
+    const std::vector<Date>& noticeDates = arguments_.exercise->dates();
+    const std::vector<Date> settleDates = arguments_.settlementDates.empty() ? noticeDates : arguments_.settlementDates;
+    QL_REQUIRE(settleDates.size() == noticeDates.size(), "FmmLsmMultiLegOptionEngine: "
+                                                             << settleDates.size() << " settlement dates for "
+                                                             << noticeDates.size() << " exercise dates");
+    std::vector<Date> usedSettle;
+    for (Size i = 0; i < noticeDates.size(); ++i) {
+        const Date& dn = noticeDates[i];
+        const Date& ds = settleDates[i];
+        if (dn <= today)
             continue;
-        const Size idx = grid_->index(d, config_.gridToleranceDays, "exercise date");
-        if (idx >= inst.lastFlowIdx)
-            continue; // exercise at or after the last flow has no value
+        QL_REQUIRE(ds >= dn, "FmmLsmMultiLegOptionEngine: settlement date " << ds << " before notice date " << dn);
+        const Size noticeIdx = grid_->index(dn, config_.gridToleranceDays, "exercise (notice) date");
+        const Size settleIdx = std::max(noticeIdx, grid_->index(ds, config_.gridToleranceDays, "settlement date"));
+        if (settleIdx >= inst.lastFlowIdx)
+            continue; // entry at or after the last flow has no value
         for (const auto& f : inst.compoundedFloats)
-            QL_REQUIRE(!(f.startIdx < idx && f.payIdx > idx),
-                       "FmmLsmMultiLegOptionEngine: exercise date " << d << " falls inside a compounded coupon period ("
-                                                                    << grid_->dates()[f.startIdx] << " - "
-                                                                    << grid_->dates()[f.endIdx]
-                                                                    << "); whole-period exercise required");
-        inst.rights.push_back({idx, idx, 0.0});
+            QL_REQUIRE(!(f.startIdx < settleIdx && f.payIdx > settleIdx),
+                       "FmmLsmMultiLegOptionEngine: settlement date "
+                           << ds << " falls inside a compounded coupon period (" << grid_->dates()[f.startIdx] << " - "
+                           << grid_->dates()[f.endIdx] << "); whole-period exercise required");
+        inst.rights.push_back({noticeIdx, settleIdx, 0.0});
+        usedSettle.push_back(ds);
     }
     if (inst.rights.empty()) {
         results_.value = 0.0;
@@ -231,6 +242,7 @@ void FmmLsmMultiLegOptionEngine::calculate() const {
             pricer.dualBound(config_.dualOuterPaths, config_.dualInnerPaths, config_.dualSeed));
     fmmWriteLsmResults(results_.additionalResults, res, dual.get(), config_, *grid_);
     results_.additionalResults["fmmExerciseDates"] = arguments_.exercise->dates();
+    results_.additionalResults["fmmSettlementDates"] = usedSettle;
     if (config_.calibrationResults)
         for (const auto& kv : config_.calibrationResults())
             results_.additionalResults[kv.first] = kv.second;

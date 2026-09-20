@@ -29,6 +29,9 @@
 #include <qle/models/fmmanalytics.hpp>
 
 #include <ql/instruments/swaption.hpp>
+#include <ql/time/businessdayconvention.hpp>
+#include <ql/time/calendar.hpp>
+#include <ql/time/calendars/nullcalendar.hpp>
 #include <ql/time/date.hpp>
 #include <ql/time/daycounter.hpp>
 #include <ql/time/daycounters/actual365fixed.hpp>
@@ -45,10 +48,15 @@ using namespace QuantLib;
 class FmmGrid {
 public:
     FmmGrid() = default;
-    //! grid = reference date, the filler dates before the first contractual date, and the
-    //! contractual dates (sorted, unique, strictly after the reference date)
+    //! grid = reference date, the tenor lattice anchored on the last contractual date (walking
+    //! backwards to the reference date), the contractual dates (sorted, unique, strictly after the
+    //! reference date) and, with a notice period, the notice date of every grid date. Lattice and
+    //! notice dates within mergeToleranceDays of a contractual date are dropped in its favour, so
+    //! that no two generated grid dates lie within the engines' date-mapping tolerance.
     FmmGrid(const Date& referenceDate, const std::set<Date>& contractualDates, const Period& fillerTenor,
-            const DayCounter& dc = Actual365Fixed(), const Natural minimumStubDays = 2);
+            const DayCounter& dc = Actual365Fixed(), const Natural minimumStubDays = 2,
+            const Period& noticePeriod = Period(0, Days), const Calendar& noticeCalendar = NullCalendar(),
+            const BusinessDayConvention noticeConvention = Preceding, const Natural mergeToleranceDays = 3);
 
     const Date& referenceDate() const { return referenceDate_; }
     const std::vector<Date>& dates() const { return dates_; }

@@ -29,7 +29,9 @@
 namespace QuantExt {
 
 FmmGrid::FmmGrid(const Date& referenceDate, const std::set<Date>& contractualDates, const Period& fillerTenor,
-                 const DayCounter& dc, const Natural minimumStubDays)
+                 const DayCounter& dc, const Natural minimumStubDays, const Period& noticePeriod,
+                 const Calendar& noticeCalendar, const BusinessDayConvention noticeConvention,
+                 const Natural mergeToleranceDays)
     : referenceDate_(referenceDate), dc_(dc) {
     QL_REQUIRE(fillerTenor.length() > 0, "FmmGrid: filler tenor must be positive");
     std::set<Date> all;
@@ -37,26 +39,38 @@ FmmGrid::FmmGrid(const Date& referenceDate, const std::set<Date>& contractualDat
         if (d > referenceDate)
             all.insert(d);
     QL_REQUIRE(!all.empty(), "FmmGrid: no contractual date after the reference date " << referenceDate);
-    // fill backwards from the first contractual date with the filler tenor (the front stub at
-    // the reference date is at most one tenor, and no grid date is closer than minimumStubDays
-    // to it), then fill every gap between consecutive contractual dates with tenor steps from
-    // the earlier date, so that the model grid keeps the tenor's resolution (e.g. quarterly rates
-    // under annual coupons) while every contractual date stays an exact grid date
-    const Date first = *all.begin();
+    // tenor lattice anchored on the last contractual date (the maturity), walking backwards to the
+    // reference date: coupon and call dates that are anniversaries of the maturity fall on the
+    // lattice even when the builder cannot supply them (callable bonds); the front stub at the
+    // reference date is at most one tenor and no lattice date is closer than minimumStubDays to it.
+    // Contractual dates off the lattice (exercise / notice dates) are extra grid dates.
+    const std::set<Date> contractual(all);
+    auto nearContractual = [&](const Date& d) {
+        auto it = contractual.lower_bound(d);
+        if (it != contractual.end() && *it - d <= static_cast<Integer>(mergeToleranceDays))
+            return true;
+        if (it != contractual.begin() && d - *std::prev(it) <= static_cast<Integer>(mergeToleranceDays))
+            return true;
+        return false;
+    };
+    const Date last = *all.rbegin();
     for (Size k = 1; k < 10000; ++k) {
-        const Date f = first - static_cast<Integer>(k) * fillerTenor;
+        const Date f = last - static_cast<Integer>(k) * fillerTenor;
         if (f <= referenceDate + static_cast<Integer>(minimumStubDays))
             break;
-        all.insert(f);
-    }
-    const std::vector<Date> contractual(all.begin(), all.end());
-    for (Size i = 0; i + 1 < contractual.size(); ++i) {
-        for (Size k = 1; k < 10000; ++k) {
-            const Date f = contractual[i] + static_cast<Integer>(k) * fillerTenor;
-            if (f >= contractual[i + 1] - static_cast<Integer>(minimumStubDays))
-                break;
+        if (!nearContractual(f))
             all.insert(f);
+    }
+    // notice offsets: the decision date of every grid date, for products whose notice dates the
+    // builder cannot see (callable bonds); the engines map the trade's notice dates onto them
+    if (noticePeriod.length() > 0) {
+        std::set<Date> notice;
+        for (const Date& d : all) {
+            const Date n = noticeCalendar.advance(d, -noticePeriod, noticeConvention);
+            if (n > referenceDate + static_cast<Integer>(minimumStubDays) && !nearContractual(n))
+                notice.insert(n);
         }
+        all.insert(notice.begin(), notice.end());
     }
     dates_.push_back(referenceDate);
     for (const Date& x : all)

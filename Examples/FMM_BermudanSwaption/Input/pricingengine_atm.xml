@@ -1,0 +1,45 @@
+<?xml version="1.0"?>
+<!-- Generalized Forward Market Model (FMM): Longstaff-Schwartz engine with the Andersen-Broadie
+     dual bound, calibrated by bootstrap to the coterminal ATM swaptions on the exercise dates (calibration strategy variant). -->
+<PricingEngines>
+  <Product type="Swap">
+    <Model>DiscountedCashflows</Model>
+    <ModelParameters/>
+    <Engine>DiscountingSwapEngine</Engine>
+    <EngineParameters/>
+  </Product>
+  <Product type="BermudanSwaption">
+    <Model>FMM</Model>
+    <ModelParameters>
+      <Parameter name="Calibration">Bootstrap</Parameter>
+      <Parameter name="CalibrationStrategy">CoterminalATM</Parameter>
+      <Parameter name="Tolerance">0.20</Parameter>
+      <Parameter name="Volatility">0.0025</Parameter>
+      <Parameter name="VolatilityType">DisplacedDiffusion</Parameter>
+      <Parameter name="Shift">1/tau</Parameter>
+      <Parameter name="RhoInf">0.6</Parameter>
+      <Parameter name="Beta">0.08</Parameter>
+      <Parameter name="Factors">3</Parameter>
+      <Parameter name="ApproximationMethod">EffectiveShift</Parameter>
+      <Parameter name="Grid">3M</Parameter>
+      <Parameter name="GridToleranceDays">5</Parameter>
+      <Parameter name="SubSteps">1</Parameter>
+    </ModelParameters>
+    <Engine>LSM</Engine>
+    <EngineParameters>
+      <Parameter name="TrainingPaths">16384</Parameter>
+      <Parameter name="ValuationPaths">32768</Parameter>
+      <Parameter name="TrainingSeed">42</Parameter>
+      <Parameter name="ValuationSeed">424242</Parameter>
+      <Parameter name="BasisOrder">2</Parameter>
+      <Parameter name="DualBound">true</Parameter>
+      <Parameter name="DualOuterPaths">512</Parameter>
+      <Parameter name="DualInnerPaths">64</Parameter>
+      <Parameter name="DualSeed">20260920</Parameter>
+    </EngineParameters>
+  </Product>
+  <GlobalParameters>
+    <Parameter name="GenerateAdditionalResults">true</Parameter>
+    <Parameter name="ContinueOnCalibrationError">false</Parameter>
+  </GlobalParameters>
+</PricingEngines>

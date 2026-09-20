@@ -30,6 +30,8 @@
 #include <qle/models/fmmanalytics.hpp>
 #include <qle/models/fmmparametrization.hpp>
 
+#include <ql/time/businessdayconvention.hpp>
+#include <ql/time/calendar.hpp>
 #include <ql/time/date.hpp>
 #include <ql/time/period.hpp>
 
@@ -81,6 +83,11 @@ public:
     McCorrection& mcCorrection() { return mc_; }
     Size& subSteps() { return subSteps_; }
     Natural& gridToleranceDays() { return gridToleranceDays_; }
+    //! notice period added to the model grid (the notice date of every grid date), for products whose
+    //! notice dates the engine builder cannot see (callable bonds); 0D = none
+    Period& noticePeriod() { return noticePeriod_; }
+    Calendar& noticeCalendar() { return noticeCalendar_; }
+    BusinessDayConvention& noticeConvention() { return noticeConvention_; }
     //! contractual dates the model grid must contain (set by engine builders from the trade;
     //! not part of the XML). Empty: the grid is built from the calibration basket dates.
     std::vector<Date>& gridDates() { return gridDates_; }
@@ -103,6 +110,9 @@ private:
     McCorrection mc_;
     Size subSteps_;
     Natural gridToleranceDays_;
+    Period noticePeriod_;
+    Calendar noticeCalendar_;
+    BusinessDayConvention noticeConvention_;
     std::vector<Date> gridDates_;
     mutable std::vector<std::string> optionExpiries_, optionTerms_, optionStrikes_;
 };

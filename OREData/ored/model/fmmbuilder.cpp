@@ -17,6 +17,9 @@
 */
 
 #include <ored/model/fmmbuilder.hpp>
+#include <limits>
+
+#include <ql/time/daycounters/actual365fixed.hpp>
 #include <ored/model/structuredmodelerror.hpp>
 #include <ored/model/structuredmodelwarning.hpp>
 #include <ored/model/utilities.hpp>
@@ -87,6 +90,32 @@ std::map<std::string, QuantLib::ext::any> FmmCalibrationInfo::additionalResults(
     return m;
 }
 
+namespace {
+Real fmmGridTenorYears(const Period& g) {
+    switch (g.units()) {
+    case Days:
+        return g.length() / 365.0;
+    case Weeks:
+        return 7.0 * g.length() / 365.0;
+    case Months:
+        return g.length() / 12.0;
+    case Years:
+        return static_cast<Real>(g.length());
+    default:
+        QL_FAIL("FmmBuilder: unsupported grid tenor units");
+    }
+}
+// per-period scale of the level volatility: Lambda_j = tau_j / tau_grid * level, so that every
+// period carries the same forward-rate volatility (HJM consistency); regular grids are unchanged
+std::vector<Real> fmmLevelScale(const QuantExt::FmmGrid& grid, const Period& gridTenor) {
+    const Real tauGrid = fmmGridTenorYears(gridTenor);
+    std::vector<Real> scale(grid.numberOfRates());
+    for (Size j = 1; j <= grid.numberOfRates(); ++j)
+        scale[j - 1] = (grid.times()[j] - grid.times()[j - 1]) / tauGrid;
+    return scale;
+}
+} // namespace
+
 FmmBuilder::FmmBuilder(const QuantLib::ext::shared_ptr<ore::data::Market>& market,
                        const QuantLib::ext::shared_ptr<FmmData>& data, const std::string& configuration,
                        const Real bootstrapTolerance, const bool continueOnError,
@@ -124,20 +153,48 @@ void FmmBuilder::initParametrization() const {
     auto data = QuantLib::ext::dynamic_pointer_cast<FmmData>(data_);
     QL_REQUIRE(data, "FmmBuilder: data is not FmmData");
 
-    // grid: the trade's contractual dates when supplied, otherwise the calibration basket's
+    // grid: the trade's contractual dates (when supplied) plus the calibration instruments' schedule
+    // dates that are not within the mapping tolerance of a grid date already (helpers expiring on
+    // notice dates carry schedules anchored on those dates, a month off the trade's lattice)
     std::set<Date> dates(data->gridDates().begin(), data->gridDates().end());
-    if (dates.empty()) {
-        for (const auto& h : swaptionBasket_) {
-            auto sh = QuantLib::ext::dynamic_pointer_cast<SwaptionHelper>(h);
-            QL_REQUIRE(sh, "FmmBuilder: calibration basket must consist of swaption helpers");
-            const auto& swap = sh->underlying();
-            dates.insert(swap->fixedSchedule().dates().begin(), swap->fixedSchedule().dates().end());
-            dates.insert(swap->floatingSchedule().dates().begin(), swap->floatingSchedule().dates().end());
-        }
+    std::set<Date> helperDates;
+    for (const auto& h : swaptionBasket_) {
+        auto sh = QuantLib::ext::dynamic_pointer_cast<SwaptionHelper>(h);
+        QL_REQUIRE(sh, "FmmBuilder: calibration basket must consist of swaption helpers");
+        const auto& swap = sh->underlying();
+        helperDates.insert(swap->fixedSchedule().dates().begin(), swap->fixedSchedule().dates().end());
+        helperDates.insert(swap->floatingSchedule().dates().begin(), swap->floatingSchedule().dates().end());
     }
+    if (dates.empty())
+        dates = helperDates;
     QL_REQUIRE(!dates.empty(), "FmmBuilder: no grid dates (neither trade dates nor a calibration basket) for "
                                    << data->qualifier());
-    grid_ = QuantLib::ext::make_shared<FmmGrid>(referenceDate_, dates, data->grid());
+    auto makeGrid = [&](const std::set<Date>& d) {
+        return QuantLib::ext::make_shared<FmmGrid>(referenceDate_, d, data->grid(), Actual365Fixed(), 2,
+                                                   data->noticePeriod(), data->noticeCalendar(),
+                                                   data->noticeConvention());
+    };
+    grid_ = makeGrid(dates);
+    Size added = 0;
+    for (const Date& d : helperDates) {
+        if (d <= referenceDate_)
+            continue;
+        auto it = std::lower_bound(grid_->dates().begin(), grid_->dates().end(), d);
+        Integer best = std::numeric_limits<Integer>::max();
+        if (it != grid_->dates().end())
+            best = std::min(best, static_cast<Integer>(*it - d));
+        if (it != grid_->dates().begin())
+            best = std::min(best, static_cast<Integer>(d - *std::prev(it)));
+        if (best > static_cast<Integer>(data->gridToleranceDays())) {
+            dates.insert(d);
+            ++added;
+        }
+    }
+    if (added > 0) {
+        DLOG("FMM grid for " << data->qualifier() << ": " << added
+                             << " calibration instrument dates added beyond the mapping tolerance");
+        grid_ = makeGrid(dates);
+    }
     const Size M = grid_->numberOfRates();
     DLOG("FMM grid for " << data->qualifier() << ": " << M << " periods to " << grid_->dates().back());
 
@@ -157,12 +214,17 @@ void FmmBuilder::initParametrization() const {
     QL_REQUIRE(levels.size() == volTimes.size() + 1, "FmmBuilder: volatility values (" << levels.size()
                                                                                        << ") vs time grid ("
                                                                                        << volTimes.size() << ")");
+    // the level volatility is quoted for a full grid-tenor period; a period of length tau carries
+    // tau / tauGrid of it, so that every period has the same forward-rate volatility (HJM
+    // consistency: Lambda_j = tau_j sigma_f; a flat Lambda over unequal periods would give a
+    // one-month period three times the volatility of a quarterly one). Regular grids are unchanged.
+    levelScale_ = fmmLevelScale(*grid_, data->grid());
     std::vector<Array> volLevels(M, Array(levels.begin(), levels.end()));
-
     Array shifts(M);
     for (Size j = 1; j <= M; ++j) {
         const Real tau = grid_->times()[j] - grid_->times()[j - 1];
         shifts[j - 1] = data->shift() == Null<Real>() ? 1.0 / tau : data->shift();
+        volLevels[j - 1] *= levelScale_[j - 1];
     }
 
     fmmParametrization_ = QuantLib::ext::make_shared<FmmParametrization>(
@@ -218,7 +280,14 @@ void FmmBuilder::calibrate() const {
         FmmSeparableVols v;
         v.segmentTimes = p.parameterTimes(0);
         v.a.assign(v.segmentTimes.size() + 1, 1.0);
-        v.levels.assign(p.numberOfRates(), data->volValues().front());
+        QL_REQUIRE(levelScale_.size() == p.numberOfRates(), "FmmBuilder: level scale not initialised");
+        auto scaledLevels = [&](const Real base) {
+            std::vector<Real> L(p.numberOfRates());
+            for (Size j = 0; j < L.size(); ++j)
+                L[j] = base * levelScale_[j];
+            return L;
+        };
+        v.levels = scaledLevels(data->volValues().front());
         if (data->calibrationType() == CalibrationType::Bootstrap) {
             QL_REQUIRE(targets.size() == v.a.size(),
                        "FmmBuilder: bootstrap needs one volatility segment per calibration swaption, got "
@@ -229,7 +298,7 @@ void FmmBuilder::calibrate() const {
             Brent solver;
             const Real level = solver.solve(
                 [&](const Real l) {
-                    v.levels.assign(p.numberOfRates(), l);
+                    v.levels = scaledLevels(l);
                     v.apply(p);
                     Real sum = 0.0;
                     for (const auto& t : targets)
@@ -238,7 +307,7 @@ void FmmBuilder::calibrate() const {
                     return sum / static_cast<Real>(targets.size());
                 },
                 1e-12, data->volValues().front(), 1e-8, 50.0);
-            v.levels.assign(p.numberOfRates(), level);
+            v.levels = scaledLevels(level);
             v.apply(p);
         } else {
             QL_FAIL("FmmBuilder: unsupported calibration type " << data->calibrationType());

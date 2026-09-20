@@ -18,6 +18,8 @@
 
 #include "toplevelfixture.hpp"
 #include <boost/test/unit_test.hpp>
+#include <set>
+#include <cmath>
 
 #include <ql/currencies/europe.hpp>
 #include <ql/math/distributions/normaldistribution.hpp>
@@ -2829,6 +2831,130 @@ BOOST_AUTO_TEST_CASE(testShiftAdmissibilityGuard) {
     BOOST_CHECK_THROW(FmmParametrization(EURCurrency(), curve, rateTimes, shifts, volTimes, volLevels,
                                          FmmParametrization::LocalVolType::DisplacedDiffusion, 0.6, 0.08, 1),
                       QuantLib::Error);
+}
+
+BOOST_AUTO_TEST_CASE(testFmmEngineNoticePeriodIdentities) {
+    BOOST_TEST_MESSAGE("A5 close-out: the trade engines with notice periods reproduce the direct A4 constructions "
+                       "(rights with settleIdx > noticeIdx) on a grid that carries the notice dates, and a notice "
+                       "period does not add value...");
+    ReplicationBed rb;
+    const Period notice(1, Months);
+    const Schedule fixedSched(rb.asof, rb.end, Period(1, Years), NullCalendar(), Unadjusted, Unadjusted,
+                              DateGeneration::Forward, false);
+    const Schedule floatSched(rb.asof, rb.end, Period(3, Months), NullCalendar(), Unadjusted, Unadjusted,
+                              DateGeneration::Forward, false);
+    std::set<Date> dates(floatSched.dates().begin(), floatSched.dates().end());
+    dates.insert(fixedSched.dates().begin(), fixedSched.dates().end());
+    // grid with the notice date of every lattice date; model in replication mode on that grid
+    auto grid = QuantLib::ext::make_shared<FmmGrid>(rb.asof, dates, Period(3, Months), Actual365Fixed(), 2, notice,
+                                                    NullCalendar(), Preceding);
+    BOOST_REQUIRE_EQUAL(grid->numberOfRates(), 2 * rb.M);
+    auto param = QuantLib::ext::make_shared<FmmParametrization>(EURCurrency(), rb.curve, grid->times(), rb.lgmParam);
+    auto model = QuantLib::ext::make_shared<ForwardMarketModel>(param);
+    const Size M = grid->numberOfRates();
+    FmmLsmEngineConfig cfg;
+    cfg.lsm.trainingPaths = 16384;
+    cfg.lsm.valuationPaths = 16384;
+
+    // --- Bermudan payer swaption deciding a month before each annual entry date
+    auto onIndex = QuantLib::ext::make_shared<OvernightIndex>("FMMON", 0, EURCurrency(), NullCalendar(), rb.dc, rb.curve);
+    const Real K = 0.03;
+    Leg fixedLeg = FixedRateLeg(fixedSched).withNotionals(1.0).withCouponRates(K, rb.dc);
+    Leg floatLeg = OvernightLeg(floatSched, onIndex).withNotionals(1.0);
+    std::vector<Date> settleDates, noticeDates;
+    for (Size y = 1; y <= 4; ++y) {
+        settleDates.push_back(fixedSched[y]);
+        noticeDates.push_back(fixedSched[y] - notice);
+    }
+    auto option = QuantLib::ext::make_shared<MultiLegOption>(
+        std::vector<Leg>{fixedLeg, floatLeg}, std::vector<bool>{true, false},
+        std::vector<Currency>{EURCurrency(), EURCurrency()}, QuantLib::ext::make_shared<BermudanExercise>(noticeDates),
+        Settlement::Physical, Settlement::PhysicalOTC, settleDates, false, notice, NullCalendar(), Preceding);
+    option->setPricingEngine(QuantLib::ext::make_shared<FmmLsmMultiLegOptionEngine>(model, grid, cfg));
+    const Real engineNpv = option->NPV();
+    FmmCallableInstrument inst;
+    inst.style = FmmCallableInstrument::Style::Enter;
+    inst.lastFlowIdx = M;
+    inst.fixedFlows.assign(M + 1, 0.0);
+    inst.floatWeights.assign(M + 1, 0.0);
+    for (Size c = 1; c < fixedSched.size(); ++c)
+        inst.fixedFlows[grid->index(fixedSched[c], 0, "fixed")] -= K * rb.dc.yearFraction(fixedSched[c - 1], fixedSched[c]);
+    for (Size c = 1; c < floatSched.size(); ++c) {
+        FmmCallableInstrument::CompoundedFloat f;
+        f.startIdx = grid->index(floatSched[c - 1], 0, "float start");
+        f.endIdx = grid->index(floatSched[c], 0, "float end");
+        f.payIdx = f.endIdx;
+        f.weight = 1.0;
+        f.spreadAmount = 0.0;
+        inst.compoundedFloats.push_back(f);
+    }
+    for (Size i = 0; i < settleDates.size(); ++i)
+        inst.rights.push_back({grid->index(noticeDates[i], 0, "notice"), grid->index(settleDates[i], 0, "settle"), 0.0});
+    FmmLsmPricer direct(model, inst, cfg.lsm);
+    const auto res = direct.calculate();
+    const auto settleOut = option->result<std::vector<Date>>("fmmSettlementDates");
+    BOOST_TEST_MESSAGE("swaption with notice: engine " << engineNpv << " vs direct " << res.lowerBound << " (diff "
+                                                       << engineNpv - res.lowerBound << ")");
+    BOOST_CHECK_SMALL(engineNpv - res.lowerBound, 1e-11);
+    BOOST_REQUIRE_EQUAL(settleOut.size(), settleDates.size());
+    BOOST_CHECK_EQUAL(settleOut.front(), settleDates.front());
+    auto plainOption = QuantLib::ext::make_shared<MultiLegOption>(
+        std::vector<Leg>{fixedLeg, floatLeg}, std::vector<bool>{true, false},
+        std::vector<Currency>{EURCurrency(), EURCurrency()}, QuantLib::ext::make_shared<BermudanExercise>(settleDates));
+    plainOption->setPricingEngine(QuantLib::ext::make_shared<FmmLsmMultiLegOptionEngine>(model, grid, cfg));
+    const Real plainNpv = plainOption->NPV();
+    const Real seSum = std::sqrt(std::pow(option->result<Real>("fmmLsmLowerBoundStdError"), 2) +
+                                 std::pow(plainOption->result<Real>("fmmLsmLowerBoundStdError"), 2));
+    BOOST_TEST_MESSAGE("swaption: notice " << engineNpv << " vs same-grid no-notice " << plainNpv << " (s.e. " << seSum
+                                           << ")");
+    BOOST_CHECK_MESSAGE(engineNpv < plainNpv + 3.0 * seSum, "a notice period must not add value");
+
+    // --- callable bond with notice dates in its call data
+    const Real coupon = 0.031;
+    Leg coupons = FixedRateLeg(fixedSched).withNotionals(1.0).withCouponRates(coupon, rb.dc);
+    std::vector<CallableBond::CallabilityData> calls, plainCalls;
+    for (Size y = 1; y <= 4; ++y) {
+        CallableBond::CallabilityData cd{fixedSched[y], CallableBond::CallabilityData::ExerciseType::OnThisDate, 1.0,
+                                         CallableBond::CallabilityData::PriceType::Dirty, true};
+        plainCalls.push_back(cd);
+        cd.noticeDate = fixedSched[y] - notice;
+        calls.push_back(cd);
+    }
+    auto spreadQuote = QuantLib::ext::make_shared<SimpleQuote>(0.0);
+    auto bond = QuantLib::ext::make_shared<CallableBond>(0, NullCalendar(), rb.asof, coupons, calls);
+    bond->setPricingEngine(QuantLib::ext::make_shared<FmmLsmCallableBondEngine>(model, grid, cfg, rb.curve,
+                                                                                Handle<Quote>(spreadQuote)));
+    const Real bondNpv = bond->NPV();
+    FmmCallableInstrument binst;
+    binst.style = FmmCallableInstrument::Style::Cancel;
+    binst.lastFlowIdx = M;
+    binst.fixedFlows.assign(M + 1, 0.0);
+    binst.floatWeights.assign(M + 1, 0.0);
+    for (Size c = 1; c < fixedSched.size(); ++c)
+        binst.fixedFlows[grid->index(fixedSched[c], 0, "coupon")] -=
+            coupon * rb.dc.yearFraction(fixedSched[c - 1], fixedSched[c]);
+    binst.fixedFlows[M] -= 1.0;
+    for (Size i = 0; i < settleDates.size(); ++i)
+        binst.rights.push_back({grid->index(noticeDates[i], 0, "notice"), grid->index(settleDates[i], 0, "call"), -1.0});
+    FmmLsmPricer bdirect(model, binst, cfg.lsm);
+    const auto bres = bdirect.calculate();
+    const auto noticeOut = bond->result<std::vector<Date>>("fmmNoticeDates");
+    BOOST_TEST_MESSAGE("callable bond with notice: engine (holder) " << bondNpv << " vs direct -(issuer cv) "
+                                                                    << -bres.lowerBoundCv << ", call value "
+                                                                    << bond->result<Real>("callPutValue"));
+    BOOST_CHECK_SMALL(bondNpv + bres.lowerBoundCv, 1e-11);
+    BOOST_CHECK_SMALL(bond->result<Real>("strippedBondNpv") + bres.underlyingValue, 1e-12);
+    BOOST_REQUIRE_EQUAL(noticeOut.size(), Size(4));
+    BOOST_CHECK_EQUAL(noticeOut.front(), fixedSched[1] - notice);
+    auto plainBond = QuantLib::ext::make_shared<CallableBond>(0, NullCalendar(), rb.asof, coupons, plainCalls);
+    plainBond->setPricingEngine(QuantLib::ext::make_shared<FmmLsmCallableBondEngine>(model, grid, cfg, rb.curve,
+                                                                                     Handle<Quote>(spreadQuote)));
+    const Real plainBondNpv = plainBond->NPV();
+    const Real bSeSum = std::sqrt(std::pow(bond->result<Real>("fmmLsmLowerBoundStdError"), 2) +
+                                  std::pow(plainBond->result<Real>("fmmLsmLowerBoundStdError"), 2));
+    BOOST_TEST_MESSAGE("callable bond: notice " << bondNpv << " vs same-grid no-notice " << plainBondNpv << " (s.e. "
+                                                << bSeSum << ")");
+    BOOST_CHECK_MESSAGE(bondNpv > plainBondNpv - 3.0 * bSeSum, "the issuer's call with a notice period must not be worth more");
 }
 
 BOOST_AUTO_TEST_SUITE_END()

@@ -83,9 +83,12 @@ void FmmLsmCallableBondEngine::calculate() const {
         QL_REQUIRE(n != Null<Real>(), "FmmLsmCallableBondEngine: cannot determine the notional outstanding at " << d);
         return n;
     };
+    std::vector<Date> noticeDates;
     for (const auto& cd : arguments_.callData) {
         if (cd.exerciseDate <= today)
             continue;
+        if (cd.noticeDate != Date() && cd.noticeDate <= today)
+            continue; // the decision date has passed
         QL_REQUIRE(cd.exerciseType == CallableBond::CallabilityData::ExerciseType::OnThisDate,
                    "FmmLsmCallableBondEngine: American (FromThisDateOn) calls are not supported");
         bool onCouponDate = false;
@@ -99,9 +102,15 @@ void FmmLsmCallableBondEngine::calculate() const {
         const Size idx = grid_->index(cd.exerciseDate, config_.gridToleranceDays, "call date");
         if (idx >= inst.lastFlowIdx)
             continue;
+        // decision at the notice date (ORE CallData NoticePeriod) and settlement on the call date;
+        // the notice date must be a grid date (FmmGrid notice offsets, builder parameter NoticePeriod)
+        Size noticeIdx = idx;
+        if (cd.noticeDate != Date() && cd.noticeDate < cd.exerciseDate)
+            noticeIdx = std::min(idx, grid_->index(cd.noticeDate, config_.gridToleranceDays, "call notice date"));
+        noticeDates.push_back(cd.noticeDate != Date() ? cd.noticeDate : cd.exerciseDate);
         // clean = dirty on a coupon date (zero accrual); price is per unit notional
         const Real fee = -cd.price * notionalAfter(cd.exerciseDate);
-        inst.rights.push_back({idx, idx, fee});
+        inst.rights.push_back({noticeIdx, idx, fee});
     }
     std::vector<FmmCallableInstrument::Right> rights;
     for (const auto& r : inst.rights)
@@ -128,6 +137,7 @@ void FmmLsmCallableBondEngine::calculate() const {
     results_.additionalResults["strippedBondNpv"] = -issuerStraight;
     results_.additionalResults["callPutValue"] = -issuerStraight - results_.value;
     results_.additionalResults["fmmIssuerSpread"] = spread;
+    results_.additionalResults["fmmNoticeDates"] = noticeDates;
     if (res) {
         fmmWriteLsmResults(results_.additionalResults, *res, dual.get(), config_, *grid_);
         // for the Cancel-style issuer instrument the reported bounds are the control-variate ones

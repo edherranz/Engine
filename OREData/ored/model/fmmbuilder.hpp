@@ -83,6 +83,7 @@ private:
     bool setCalibrationInfo_ = false;
     mutable Date parametrizationInitializedOnAnchorDate_;
     mutable QuantLib::ext::shared_ptr<QuantExt::FmmGrid> grid_;
+    mutable std::vector<Real> levelScale_; //!< tau_j / tau_grid per period (level volatility scaling)
     mutable QuantLib::ext::shared_ptr<QuantExt::FmmParametrization> fmmParametrization_;
     mutable QuantLib::ext::shared_ptr<QuantExt::ForwardMarketModel> fmm_;
     mutable QuantLib::ext::shared_ptr<QuantExt::FmmIrModel> irModel_;

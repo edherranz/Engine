@@ -82,6 +82,12 @@ QuantLib::ext::shared_ptr<FmmBuilder> fmmModelBuilder(const EngineBuilder* build
     data->subSteps() = static_cast<Size>(parseInteger(builder->modelParameter("SubSteps", {}, false, "1")));
     data->gridToleranceDays() =
         static_cast<Natural>(parseInteger(builder->modelParameter("GridToleranceDays", {}, false, "3")));
+    // notice period of the trade's calls (the builder cannot see the trade's call data): the grid
+    // then carries the notice date of every grid date, onto which the engine maps the trade's
+    data->noticePeriod() = parsePeriod(builder->modelParameter("NoticePeriod", {}, false, "0D"));
+    data->noticeCalendar() = parseCalendar(builder->modelParameter("NoticeCalendar", {}, false, "NullCalendar"));
+    data->noticeConvention() =
+        parseBusinessDayConvention(builder->modelParameter("NoticeConvention", {}, false, "Preceding"));
 
     if (calibrationStrategy != CalibrationStrategy::None) {
         for (Size i = 0; i < req.expiries.size(); ++i) {

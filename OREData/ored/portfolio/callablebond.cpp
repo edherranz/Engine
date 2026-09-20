@@ -22,6 +22,8 @@
 #include <ored/portfolio/builders/bond.hpp>
 #include <ored/portfolio/builders/callablebond.hpp>
 #include <ored/portfolio/callablebond.hpp>
+
+#include <ql/time/calendars/nullcalendar.hpp>
 #include <ored/portfolio/callablebondreferencedata.hpp>
 #include <ored/portfolio/fixingdates.hpp>
 #include <ored/portfolio/legdata.hpp>
@@ -79,8 +81,25 @@ buildCallabilityData(const CallableBondData::CallabilityData& callData, const Da
             } else {
                 QL_FAIL("invalid price type '" << priceTypes[i] << "', expected Clean, Dirty");
             }
-            result.push_back(QuantExt::CallableBond::CallabilityData{callDatesPlusInf[i], exerciseType, prices[i],
-                                                                     priceType, includeAccrual[i]});
+            QuantExt::CallableBond::CallabilityData cd{callDatesPlusInf[i], exerciseType, prices[i], priceType,
+                                                       includeAccrual[i]};
+            if (!callData.noticePeriod().empty()) {
+                // decision date: the call date less the notice period, on the notice calendar (default:
+                // the call schedule's calendar), Preceding unless a convention is given
+                std::string calStr = callData.noticeCalendar();
+                if (calStr.empty()) {
+                    if (!callData.dates().rules().empty())
+                        calStr = callData.dates().rules().front().calendar();
+                    else if (!callData.dates().dates().empty())
+                        calStr = callData.dates().dates().front().calendar();
+                }
+                const Calendar cal = calStr.empty() ? Calendar(NullCalendar()) : parseCalendar(calStr);
+                const BusinessDayConvention bdc = callData.noticeConvention().empty()
+                                                      ? Preceding
+                                                      : parseBusinessDayConvention(callData.noticeConvention());
+                cd.noticeDate = cal.advance(callDatesPlusInf[i], -parsePeriod(callData.noticePeriod()), bdc);
+            }
+            result.push_back(cd);
         }
     }
     return result;
@@ -96,6 +115,9 @@ void CallableBondData::CallabilityData::fromXML(XMLNode* node) {
         XMLUtils::getChildrenValuesWithAttributes(node, "PriceTypes", "PriceType", "startDate", priceTypeDates_, true);
     includeAccrual_ = XMLUtils::getChildrenValuesWithAttributes<bool>(
         node, "IncludeAccruals", "IncludeAccrual", "startDate", includeAccrualDates_, &parseBool, true);
+    noticePeriod_ = XMLUtils::getChildValue(node, "NoticePeriod", false, "");
+    noticeCalendar_ = XMLUtils::getChildValue(node, "NoticeCalendar", false, "");
+    noticeConvention_ = XMLUtils::getChildValue(node, "NoticeConvention", false, "");
     initialised_ = true;
 }
 
@@ -108,6 +130,12 @@ XMLNode* CallableBondData::CallabilityData::toXML(XMLDocument& doc) const {
                                                 priceTypeDates_);
     XMLUtils::addChildrenWithOptionalAttributes(doc, node, "IncludeAccruals", "IncludeAccrual", includeAccrual_,
                                                 "startDate", includeAccrualDates_);
+    if (!noticePeriod_.empty())
+        XMLUtils::addChild(doc, node, "NoticePeriod", noticePeriod_);
+    if (!noticeCalendar_.empty())
+        XMLUtils::addChild(doc, node, "NoticeCalendar", noticeCalendar_);
+    if (!noticeConvention_.empty())
+        XMLUtils::addChild(doc, node, "NoticeConvention", noticeConvention_);
     return node;
 }
 

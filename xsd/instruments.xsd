@@ -2490,6 +2490,9 @@
           </xs:sequence>
         </xs:complexType>
       </xs:element>
+      <xs:element type="xs:string" name="NoticePeriod" minOccurs="0"/>
+      <xs:element type="xs:string" name="NoticeCalendar" minOccurs="0"/>
+      <xs:element type="xs:string" name="NoticeConvention" minOccurs="0"/>
     </xs:all>
   </xs:complexType>
 
@@ -2889,7 +2892,10 @@
                 </xs:sequence>
               </xs:complexType>
             </xs:element>
-          </xs:all>
+            <xs:element type="xs:string" name="NoticePeriod" minOccurs="0"/>
+      <xs:element type="xs:string" name="NoticeCalendar" minOccurs="0"/>
+      <xs:element type="xs:string" name="NoticeConvention" minOccurs="0"/>
+    </xs:all>
         </xs:complexType>
       </xs:element>
     </xs:all>

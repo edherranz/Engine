@@ -19,6 +19,9 @@
 #include <boost/make_shared.hpp>
 #include <boost/test/unit_test.hpp>
 
+#include <cmath>
+#include <sstream>
+
 #include <ored/configuration/conventions.hpp>
 #include <ored/marketdata/marketimpl.hpp>
 #include <ored/model/fmmbuilder.hpp>
@@ -91,7 +94,8 @@ public:
 
 const Date kAsof(19, September, 2026);
 
-QuantLib::ext::shared_ptr<EngineData> fmmEngineData(const std::string& product, const bool dualBound) {
+QuantLib::ext::shared_ptr<EngineData> fmmEngineData(const std::string& product, const bool dualBound,
+                                                    const std::map<std::string, std::string>& extraModelParams = {}) {
     auto ed = QuantLib::ext::make_shared<EngineData>();
     ed->model(product) = "FMM";
     ed->engine(product) = "LSM";
@@ -108,6 +112,8 @@ QuantLib::ext::shared_ptr<EngineData> fmmEngineData(const std::string& product, 
                                     {"Grid", "3M"},
                                     {"GridToleranceDays", "3"},
                                     {"ReferenceCalibrationGrid", "1Y,2Y,3Y,4Y"}};
+    for (const auto& kv : extraModelParams)
+        ed->modelParameters(product)[kv.first] = kv.second;
     ed->engineParameters(product) = {{"TrainingPaths", "16384"}, {"ValuationPaths", "16384"},
                                      {"TrainingSeed", "42"},     {"ValuationSeed", "424242"},
                                      {"BasisOrder", "2"},        {"DualBound", dualBound ? "true" : "false"},
@@ -144,20 +150,25 @@ QuantLib::ext::shared_ptr<EngineData> lgmEngineData(const std::string& product) 
     return ed;
 }
 
-QuantLib::ext::shared_ptr<ore::data::Swaption> bermudanPayerSwaption(const Real fixedRate) {
-    ScheduleData fixedSchedule(ScheduleRules("2026-09-19", "2031-09-19", "1Y", "NullCalendar", "F", "F", "Forward"));
-    ScheduleData floatSchedule(ScheduleRules("2026-09-19", "2031-09-19", "3M", "NullCalendar", "F", "F", "Forward"));
+QuantLib::ext::shared_ptr<ore::data::Swaption>
+bermudanPayerSwaption(const Real fixedRate, const std::string& noticePeriod = "", const std::string& start = "2026-09-19",
+                      const std::string& end = "2031-09-19",
+                      const std::vector<std::string>& exerciseDates = {"2027-09-19", "2028-09-19", "2029-09-19",
+                                                                       "2030-09-19"}) {
+    ScheduleData fixedSchedule(ScheduleRules(start, end, "1Y", "NullCalendar", "F", "F", "Forward"));
+    ScheduleData floatSchedule(ScheduleRules(start, end, "3M", "NullCalendar", "F", "F", "Forward"));
     LegData fixedLeg(QuantLib::ext::make_shared<FixedLegData>(std::vector<Real>(1, fixedRate)), true, "USD", fixedSchedule,
                      "A365", std::vector<Real>(1, 1.0));
     LegData floatLeg(QuantLib::ext::make_shared<FloatingLegData>("USD-SOFR", 0, true, std::vector<Real>(1, 0.0)), false,
                      "USD", floatSchedule, "A365", std::vector<Real>(1, 1.0));
     Envelope env("CP1");
-    OptionData optionData("Long", "Call", "Bermudan", true,
-                          {"2027-09-19", "2028-09-19", "2029-09-19", "2030-09-19"}, "Physical");
+    OptionData optionData("Long", "Call", "Bermudan", true, exerciseDates, "Physical", "", PremiumData(), {}, {},
+                          noticePeriod, noticePeriod.empty() ? "" : "NullCalendar",
+                          noticePeriod.empty() ? "" : "Unadjusted");
     return QuantLib::ext::make_shared<ore::data::Swaption>(env, optionData, std::vector<LegData>{fixedLeg, floatLeg});
 }
 
-QuantLib::ext::shared_ptr<ore::data::CallableBond> callableBondFromXml() {
+QuantLib::ext::shared_ptr<ore::data::CallableBond> callableBondFromXml(const std::string& extraCallData = "") {
     const std::string xml =
         "<Trade id=\"CB-FMM\"><TradeType>CallableBond</TradeType>"
         "<Envelope><CounterParty>CP1</CounterParty><NettingSetId>NS1</NettingSetId></Envelope>"
@@ -175,8 +186,8 @@ QuantLib::ext::shared_ptr<ore::data::CallableBond> callableBondFromXml() {
         "<ScheduleData><Dates><Dates><Date>2027-09-19</Date><Date>2028-09-19</Date><Date>2029-09-19</Date>"
         "<Date>2030-09-19</Date></Dates></Dates></ScheduleData>"
         "<Prices><Price>1.0</Price></Prices><PriceTypes><PriceType>Dirty</PriceType></PriceTypes>"
-        "<IncludeAccruals><IncludeAccrual>true</IncludeAccrual></IncludeAccruals></CallData>"
-        "</CallableBondData></Trade>";
+        "<IncludeAccruals><IncludeAccrual>true</IncludeAccrual></IncludeAccruals>" +
+        extraCallData + "</CallData></CallableBondData></Trade>";
     XMLDocument doc;
     doc.fromXMLString(xml);
     auto trade = QuantLib::ext::make_shared<ore::data::CallableBond>();
@@ -434,6 +445,149 @@ BOOST_AUTO_TEST_CASE(testFmmCallableBondThroughEngineFactory) {
     BOOST_CHECK_SMALL(strippedSpread - strippedLgmSpread, 5e-5);
     BOOST_CHECK_MESSAGE(std::fabs(npvFmmSpread - npvLgmSpread) < 0.10 * callLgm + 3.0 * se,
                         "FMM vs LGM callable bond with spread: " << npvFmmSpread << " vs " << npvLgmSpread);
+}
+
+BOOST_AUTO_TEST_CASE(testFmmNoticePeriods) {
+    BOOST_TEST_MESSAGE("Testing notice periods through the engine factory: a Bermudan swaption with a one-month "
+                       "notice (decision at the notice date, swap entry at the exercise date) and a callable bond "
+                       "with a one-month notice in its CallData...");
+    Settings::instance().evaluationDate() = kAsof;
+    auto market = QuantLib::ext::make_shared<FmmTestMarket>(kAsof, 0.03, 0.0080);
+
+    // swaption: ORE passes the notice dates as exercise dates and the settlement dates alongside
+    auto plainFactory = QuantLib::ext::make_shared<EngineFactory>(fmmEngineData("BermudanSwaption", false), market);
+    auto plain = bermudanPayerSwaption(0.031);
+    plain->build(plainFactory);
+    const Real npvPlain = plain->instrument()->NPV();
+    const Real sePlain =
+        QuantLib::ext::any_cast<Real>(plain->instrument()->additionalResults().at("fmmLsmLowerBoundStdError"));
+    auto noticeFactory = QuantLib::ext::make_shared<EngineFactory>(fmmEngineData("BermudanSwaption", false), market);
+    auto notice = bermudanPayerSwaption(0.031, "1M");
+    notice->build(noticeFactory);
+    const Real npvNotice = notice->instrument()->NPV();
+    const auto& add = notice->instrument()->additionalResults();
+    const Real seNotice = QuantLib::ext::any_cast<Real>(add.at("fmmLsmLowerBoundStdError"));
+    const auto settle = QuantLib::ext::any_cast<std::vector<Date>>(add.at("fmmSettlementDates"));
+    const auto exercise = QuantLib::ext::any_cast<std::vector<Date>>(add.at("fmmExerciseDates"));
+    BOOST_REQUIRE_EQUAL(settle.size(), Size(4));
+    BOOST_REQUIRE_EQUAL(exercise.size(), Size(4));
+    for (Size i = 0; i < 4; ++i) {
+        BOOST_CHECK_EQUAL(settle[i], Date(19, September, 2027 + static_cast<Year>(i)));
+        BOOST_CHECK_EQUAL(exercise[i], Date(19, August, 2027 + static_cast<Year>(i)));
+    }
+    const Real periodsPlain = QuantLib::ext::any_cast<Real>(plain->instrument()->additionalResults().at("fmmGridPeriods"));
+    const Real periodsNotice = QuantLib::ext::any_cast<Real>(add.at("fmmGridPeriods"));
+    BOOST_TEST_MESSAGE("Bermudan payer: no notice " << npvPlain << " +/- " << sePlain << " (" << periodsPlain
+                                                    << " grid periods), one-month notice " << npvNotice << " +/- "
+                                                    << seNotice << " (" << periodsNotice << " grid periods)");
+    // deciding a month early with less information cannot be worth more (beyond noise)
+    BOOST_CHECK_MESSAGE(npvNotice < npvPlain + 3.0 * std::sqrt(sePlain * sePlain + seNotice * seNotice),
+                        "notice-period value must not exceed the no-notice value: " << npvNotice << " vs " << npvPlain);
+    BOOST_CHECK(npvNotice > 0.5 * npvPlain);
+    // the notice dates are contractual grid dates (four extra periods) and the calibration helpers
+    // expiring on them carry schedules anchored on the notice anniversaries, whose dates beyond the
+    // mapping tolerance are added as well
+    auto noticeBuilder = QuantLib::ext::dynamic_pointer_cast<FmmBuilder>(noticeFactory->modelBuilders().begin()->second);
+    BOOST_REQUIRE(noticeBuilder);
+    std::ostringstream gridDates;
+    for (const Date& d : noticeBuilder->grid()->dates())
+        gridDates << d << " ";
+    BOOST_TEST_MESSAGE("notice grid: " << gridDates.str());
+    BOOST_CHECK(periodsNotice >= periodsPlain + 4.0);
+
+    // callable bond: NoticePeriod in the CallData, NoticePeriod model parameter for the grid
+    const std::string noticeXml = "<NoticePeriod>1M</NoticePeriod><NoticeCalendar>NullCalendar</NoticeCalendar>"
+                                  "<NoticeConvention>Unadjusted</NoticeConvention>";
+    auto bondPlain = callableBondFromXml();
+    auto bondPlainFactory = QuantLib::ext::make_shared<EngineFactory>(fmmEngineData("CallableBond", false), market);
+    bondPlain->build(bondPlainFactory);
+    const Real bondNpvPlain = bondPlain->instrument()->NPV();
+    const Real bondSePlain =
+        QuantLib::ext::any_cast<Real>(bondPlain->instrument()->additionalResults().at("fmmLsmLowerBoundStdError"));
+    auto bondNotice = callableBondFromXml(noticeXml);
+    BOOST_CHECK_EQUAL(bondNotice->data().callData().noticePeriod(), "1M");
+    auto bondNoticeFactory = QuantLib::ext::make_shared<EngineFactory>(
+        fmmEngineData("CallableBond", false, {{"NoticePeriod", "1M"}, {"NoticeCalendar", "NullCalendar"}}), market);
+    bondNotice->build(bondNoticeFactory);
+    const Real bondNpvNotice = bondNotice->instrument()->NPV();
+    const auto& badd = bondNotice->instrument()->additionalResults();
+    const Real bondSeNotice = QuantLib::ext::any_cast<Real>(badd.at("fmmLsmLowerBoundStdError"));
+    const auto noticeDates = QuantLib::ext::any_cast<std::vector<Date>>(badd.at("fmmNoticeDates"));
+    BOOST_REQUIRE_EQUAL(noticeDates.size(), Size(4));
+    for (Size i = 0; i < 4; ++i)
+        BOOST_CHECK_EQUAL(noticeDates[i], Date(19, August, 2027 + static_cast<Year>(i)));
+    BOOST_TEST_MESSAGE("callable bond (holder): no notice " << bondNpvPlain << " +/- " << bondSePlain
+                                                           << ", one-month notice " << bondNpvNotice << " +/- "
+                                                           << bondSeNotice << ", call value "
+                                                           << QuantLib::ext::any_cast<Real>(badd.at("callPutValue")));
+    // the issuer's call with less information is worth less, so the holder's bond is worth more
+    BOOST_CHECK_MESSAGE(bondNpvNotice >
+                            bondNpvPlain - 3.0 * std::sqrt(bondSePlain * bondSePlain + bondSeNotice * bondSeNotice),
+                        "notice-period bond value must not fall below the no-notice value: " << bondNpvNotice << " vs "
+                                                                                             << bondNpvPlain);
+    // the trade's notice dates must be grid dates: without the model parameter the engine refuses
+    // (at pricing time, when the call data is mapped onto the grid)
+    auto bondNoGrid = callableBondFromXml(noticeXml);
+    auto bondNoGridFactory = QuantLib::ext::make_shared<EngineFactory>(fmmEngineData("CallableBond", false), market);
+    bondNoGrid->build(bondNoGridFactory);
+    BOOST_CHECK_THROW(bondNoGrid->instrument()->NPV(), std::exception);
+    // XML round trip of the notice fields
+    XMLDocument doc;
+    XMLNode* node = bondNotice->toXML(doc);
+    auto again = QuantLib::ext::make_shared<ore::data::CallableBond>();
+    again->fromXML(node);
+    BOOST_CHECK_EQUAL(again->data().callData().noticePeriod(), "1M");
+    BOOST_CHECK_EQUAL(again->data().callData().noticeCalendar(), "NullCalendar");
+    BOOST_CHECK_EQUAL(again->data().callData().noticeConvention(), "Unadjusted");
+}
+
+BOOST_AUTO_TEST_CASE(testFmmBuilderEvaluationDateMove) {
+    BOOST_TEST_MESSAGE("Testing FmmBuilder on a moved evaluation date: the builder rebuilds the grid, the basket and "
+                       "the calibration on the new reference date (engines built before the move must be rebuilt, "
+                       "as for LGM)...");
+    Settings::instance().evaluationDate() = kAsof;
+    auto market = QuantLib::ext::make_shared<FmmTestMarket>(kAsof, 0.03, 0.0080);
+    auto factory = QuantLib::ext::make_shared<EngineFactory>(fmmEngineData("BermudanSwaption", false), market);
+    auto trade = bermudanPayerSwaption(0.031);
+    trade->build(factory);
+    trade->instrument()->NPV();
+    auto builder = QuantLib::ext::dynamic_pointer_cast<FmmBuilder>(factory->modelBuilders().begin()->second);
+    BOOST_REQUIRE(builder);
+    const auto gridDates0 = builder->grid()->dates();
+    BOOST_CHECK_EQUAL(builder->grid()->referenceDate(), kAsof);
+    const Date moved = kAsof + 1 * Months;
+    Settings::instance().evaluationDate() = moved; // flat curve and vol have settlement days 0: they follow
+    BOOST_CHECK(builder->requiresRecalibration());
+    builder->recalibrate();
+    BOOST_CHECK_EQUAL(builder->grid()->referenceDate(), moved);
+    BOOST_CHECK(builder->grid()->dates().front() == moved);
+    BOOST_CHECK(builder->grid()->dates()[1] > moved);
+    BOOST_CHECK(builder->grid()->dates().back() == gridDates0.back()); // same maturity anchor
+    BOOST_CHECK(builder->grid()->numberOfRates() <= gridDates0.size() - 1); // lattice re-anchored, no new dates
+    const auto& info = builder->calibrationInfo();
+    BOOST_REQUIRE_EQUAL(info.modelVols.size(), Size(4));
+    for (Size i = 0; i < info.modelVols.size(); ++i) {
+        BOOST_CHECK_SMALL(info.modelVols[i] - 0.0080, 1e-7);
+        BOOST_CHECK_CLOSE(info.expiryTimes[i],
+                          Actual365Fixed().yearFraction(moved, Date(19, September, 2027 + static_cast<Year>(i))),
+                          1e-6);
+    }
+    BOOST_TEST_MESSAGE("moved " << kAsof << " -> " << moved << ": grid " << gridDates0.size() - 1 << " -> "
+                                << builder->grid()->numberOfRates() << " periods, first expiry time "
+                                << info.expiryTimes.front());
+    // the original trade is now seasoned (its swap accrues over the new valuation date), which the
+    // FMM engines reject explicitly; a trade starting after the move prices on the new model
+    auto seasonedFactory = QuantLib::ext::make_shared<EngineFactory>(fmmEngineData("BermudanSwaption", false), market);
+    auto seasoned = bermudanPayerSwaption(0.031);
+    seasoned->build(seasonedFactory); // the leg mapper runs at pricing time
+    BOOST_CHECK_THROW(seasoned->instrument()->NPV(), std::exception);
+    auto factory2 = QuantLib::ext::make_shared<EngineFactory>(fmmEngineData("BermudanSwaption", false), market);
+    auto trade2 = bermudanPayerSwaption(0.031, "", "2026-12-19", "2031-12-19",
+                                        {"2027-12-19", "2028-12-19", "2029-12-19", "2030-12-19"});
+    trade2->build(factory2);
+    const Real npv2 = trade2->instrument()->NPV();
+    BOOST_TEST_MESSAGE("NPV of a forward-starting swaption one month later " << npv2);
+    BOOST_CHECK(npv2 > 0.0);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

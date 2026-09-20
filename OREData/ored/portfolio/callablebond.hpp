@@ -51,6 +51,10 @@ public:
         const std::vector<std::string>& priceTypeDates() const { return priceTypeDates_; }
         const std::vector<bool>& includeAccrual() const { return includeAccrual_; }
         const std::vector<std::string>& includeAccrualDates() const { return includeAccrualDates_; }
+        //! optional notice period before each call / put date (decision date = date - period)
+        const std::string& noticePeriod() const { return noticePeriod_; }
+        const std::string& noticeCalendar() const { return noticeCalendar_; }
+        const std::string& noticeConvention() const { return noticeConvention_; }
 
         void fromXML(ore::data::XMLNode* node) override;
         ore::data::XMLNode* toXML(ore::data::XMLDocument& doc) const override;
@@ -68,6 +72,7 @@ public:
         std::vector<std::string> priceTypeDates_;
         std::vector<bool> includeAccrual_;
         std::vector<std::string> includeAccrualDates_;
+        std::string noticePeriod_, noticeCalendar_, noticeConvention_;
     };
 
     // Convertible Bond Data

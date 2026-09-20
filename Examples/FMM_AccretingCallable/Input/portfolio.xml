@@ -1,0 +1,81 @@
+<?xml version="1.0"?>
+<Portfolio>
+  <!-- 5Y USD accreting note: the notional steps up 5% a year (10.0m -> 12.155m), coupons 4.5%
+       semiannual 30/360 on the accreted notional, callable at par of the accreted notional (dirty,
+       accruals included) on every coupon date from year one; the accreted amount is repaid at
+       call or maturity -->
+  <Trade id="FMM_ACCRETING_CALLABLE_USD_2030">
+    <TradeType>CallableBond</TradeType>
+    <Envelope>
+      <CounterParty>CPTY</CounterParty>
+      <NettingSetId>NS</NettingSetId>
+    </Envelope>
+    <CallableBondData>
+      <BondData>
+        <IssuerId>FMM-EXAMPLE-ISSUER</IssuerId>
+        <CreditCurveId></CreditCurveId>
+        <CreditRisk>false</CreditRisk>
+        <SecurityId>FMM-USD-ACCRETING-2030</SecurityId>
+        <ReferenceCurveId>USD-SOFR</ReferenceCurveId>
+        <SettlementDays>2</SettlementDays>
+        <Calendar>US</Calendar>
+        <IssueDate>2025-02-10</IssueDate>
+        <LegData>
+          <LegType>Fixed</LegType>
+          <Payer>false</Payer>
+          <Currency>USD</Currency>
+          <Notionals>
+            <Notional>10000000</Notional>
+            <Notional startDate="2026-02-10">10500000</Notional>
+            <Notional startDate="2027-02-10">11025000</Notional>
+            <Notional startDate="2028-02-10">11576250</Notional>
+            <Notional startDate="2029-02-10">12155063</Notional>
+          </Notionals>
+          <DayCounter>30/360</DayCounter>
+          <PaymentConvention>F</PaymentConvention>
+          <FixedLegData>
+            <Rates>
+              <Rate>0.045</Rate>
+            </Rates>
+          </FixedLegData>
+          <ScheduleData>
+            <Rules>
+              <StartDate>2025-02-10</StartDate>
+              <EndDate>2030-02-10</EndDate>
+              <Tenor>6M</Tenor>
+              <Calendar>US</Calendar>
+              <Convention>MF</Convention>
+              <TermConvention>MF</TermConvention>
+              <Rule>Backward</Rule>
+            </Rules>
+          </ScheduleData>
+        </LegData>
+      </BondData>
+      <CallData>
+        <Styles>
+          <Style>Bermudan</Style>
+        </Styles>
+        <ScheduleData>
+          <Rules>
+            <StartDate>2026-02-10</StartDate>
+            <EndDate>2029-08-10</EndDate>
+            <Tenor>6M</Tenor>
+            <Calendar>US</Calendar>
+            <Convention>MF</Convention>
+            <TermConvention>MF</TermConvention>
+            <Rule>Forward</Rule>
+          </Rules>
+        </ScheduleData>
+        <Prices>
+          <Price>1.0</Price>
+        </Prices>
+        <PriceTypes>
+          <PriceType>Dirty</PriceType>
+        </PriceTypes>
+        <IncludeAccruals>
+          <IncludeAccrual>true</IncludeAccrual>
+        </IncludeAccruals>
+      </CallData>
+    </CallableBondData>
+  </Trade>
+</Portfolio>
