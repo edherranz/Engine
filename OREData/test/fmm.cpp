@@ -636,10 +636,16 @@ BOOST_AUTO_TEST_CASE(testFmmJointCapFloorSwaptionCalibration) {
                                                         << ", worst caplet residual " << worstCap
                                                         << " bp, worst swaption residual " << worstSwp << " bp, NPV "
                                                         << npv1 << ", first caplet time " << capT.front());
-    BOOST_CHECK_EQUAL(QuantLib::ext::any_cast<Real>(add1.at("fmmJointIterations")), 15.0);
+    // the alternation stops at its fixed point (stationary) before the 15-iteration cap; the
+    // residual criterion is not met (structural, about 2 bp on this flat market)
+    BOOST_CHECK(QuantLib::ext::any_cast<Real>(add1.at("fmmJointIterations")) <= 15.0);
     BOOST_CHECK(!QuantLib::ext::any_cast<bool>(add1.at("fmmJointConverged")));
+    BOOST_CHECK(QuantLib::ext::any_cast<bool>(add1.at("fmmJointStationary")) ||
+                QuantLib::ext::any_cast<Real>(add1.at("fmmJointIterations")) == 15.0);
+    BOOST_TEST_MESSAGE("stationary " << QuantLib::ext::any_cast<bool>(add1.at("fmmJointStationary")) << ", last parameter change "
+                                     << QuantLib::ext::any_cast<Real>(add1.at("fmmJointLastParameterChange")));
     BOOST_CHECK(worstSwp < 0.01);
-    BOOST_CHECK(worstCap > 0.5 && worstCap < 3.0); // structural, about 2 bp on this flat market
+    BOOST_CHECK(worstCap > 0.5 && worstCap < 3.0);
     BOOST_CHECK_CLOSE(QuantLib::ext::any_cast<Real>(add1.at("fmmCapletMaxResidualBp")), worstCap, 1e-6);
     BOOST_CHECK(npv1 > 0.0);
 

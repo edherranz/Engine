@@ -151,10 +151,22 @@ FmmCalibrationReport fmmJointBootstrap(FmmParametrization& p, FmmSeparableVols& 
                                        const FmmSwaptionApproxMethod method) {
     const auto start = std::chrono::steady_clock::now();
     FmmCalibrationReport report;
+    // the alternation (caplet levels, then swaption time dependence) is iterated until either all
+    // targets are within the tolerance (converged) or the parameters stop moving (stationary: the
+    // fixed point of the alternation, reached when the two baskets are not jointly attainable and
+    // an irreducible residual remains); stopping at a fixed iteration count instead would make the
+    // calibrated state, and every sensitivity through it, depend on where the count cuts the path
     for (Size it = 0; it < maxIterations; ++it) {
         report.iterations = it + 1;
+        const std::vector<Real> prevLevels = v.levels, prevA = v.a;
         fmmCapletLevelBootstrap(p, v, capletTargets);
         fmmSwaptionTimeDependenceBootstrap(p, v, swaptionTargets, method);
+        Real change = 0.0;
+        for (Size j = 0; j < v.levels.size(); ++j)
+            change = std::max(change, std::fabs(v.levels[j] - prevLevels[j]) / std::max(std::fabs(prevLevels[j]), 1e-12));
+        for (Size k = 0; k < v.a.size(); ++k)
+            change = std::max(change, std::fabs(v.a[k] - prevA[k]) / std::max(std::fabs(prevA[k]), 1e-12));
+        report.lastParameterChange = change;
         // convergence: all targets repriced within tolerance
         Real worst = 0.0;
         for (const auto& t : capletTargets)
@@ -165,6 +177,10 @@ FmmCalibrationReport fmmJointBootstrap(FmmParametrization& p, FmmSeparableVols& 
             worst = std::max(worst, std::fabs(modelSwaptionVol(p, t, method) - t.normalVol) * 1e4);
         if (worst < tolBp) {
             report.converged = true;
+            break;
+        }
+        if (it > 0 && change < 1e-9) {
+            report.stationary = true;
             break;
         }
     }

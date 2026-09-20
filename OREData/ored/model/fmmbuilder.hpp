@@ -52,7 +52,9 @@ struct FmmCalibrationInfo {
     //! cap/floor basket (joint bootstrap), empty when no basket was configured
     std::vector<Real> capletTimes, capletStrikes, capletMarketVols, capletModelVols;
     Size jointIterations = 0;
-    bool jointConverged = false;
+    bool jointConverged = false;  //!< both baskets within the joint tolerance
+    bool jointStationary = false; //!< the alternation reached its fixed point
+    Real jointLastParameterChange = Null<Real>();
     Real capletMaxResidualBp = Null<Real>();
     Size gridPeriods = 0;
     Natural gridMaxDateMismatchDays = 0;

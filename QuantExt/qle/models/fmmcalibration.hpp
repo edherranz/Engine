@@ -75,7 +75,9 @@ struct FmmCalibrationReport {
     std::vector<Row> rows;
     Size iterations = 0;
     Real runtimeSeconds = 0.0;
-    bool converged = false;
+    bool converged = false;  //!< all targets within the tolerance
+    bool stationary = false; //!< the alternation reached its fixed point (parameters stopped moving)
+    Real lastParameterChange = Null<Real>(); //!< max relative parameter change in the last iteration
     Real maxAbsErrorBp() const;
 };
 

@@ -16,7 +16,7 @@
       <Parameter name="Calibration">Bootstrap</Parameter>
       <Parameter name="CalibrationStrategy">CoterminalDealStrike</Parameter>
       <Parameter name="CapFloorBasket">ATM</Parameter>
-      <Parameter name="JointMaxIterations">8</Parameter>
+      <Parameter name="JointMaxIterations">50</Parameter>
       <Parameter name="JointToleranceBp">0.1</Parameter>
       <Parameter name="Tolerance">0.20</Parameter>
       <Parameter name="Volatility">0.0025</Parameter>

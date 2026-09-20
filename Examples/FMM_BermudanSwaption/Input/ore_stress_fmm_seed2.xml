@@ -1,0 +1,43 @@
+<?xml version="1.0"?>
+<ORE>
+  <Setup>
+    <Parameter name="asofDate">2025-02-10</Parameter>
+    <Parameter name="inputPath">Input</Parameter>
+    <Parameter name="outputPath">Output_Stress_FMM_Seed2</Parameter>
+    <Parameter name="logFile">log.txt</Parameter>
+    <Parameter name="logMask">15</Parameter>
+    <Parameter name="marketDataFile">../../Products/Input/marketdata.csv</Parameter>
+    <Parameter name="fixingDataFile">../../Products/Input/fixings.csv</Parameter>
+    <Parameter name="implyTodaysFixings">N</Parameter>
+    <Parameter name="curveConfigFile">../../Products/Input/curveconfig.xml</Parameter>
+    <Parameter name="conventionsFile">../../Products/Input/conventions.xml</Parameter>
+    <Parameter name="marketConfigFile">todaysmarket.xml</Parameter>
+    <Parameter name="pricingEnginesFile">pricingengine_sensi_seed2.xml</Parameter>
+    <Parameter name="portfolioFile">portfolio.xml</Parameter>
+    <Parameter name="observationModel">None</Parameter>
+    <Parameter name="continueOnError">false</Parameter>
+  </Setup>
+  <Markets>
+    <Parameter name="lgmcalibration">default</Parameter>
+    <Parameter name="fxcalibration">default</Parameter>
+    <Parameter name="pricing">default</Parameter>
+    <Parameter name="simulation">default</Parameter>
+  </Markets>
+  <Analytics>
+    <Analytic type="npv">
+      <Parameter name="active">Y</Parameter>
+      <Parameter name="baseCurrency">USD</Parameter>
+      <Parameter name="outputFileName">npv.csv</Parameter>
+      <Parameter name="additionalResults">N</Parameter>
+    </Analytic>
+    <Analytic type="stress">
+      <Parameter name="active">Y</Parameter>
+      <Parameter name="precision">6</Parameter>
+      <Parameter name="marketConfigFile">simulation.xml</Parameter>
+      <Parameter name="stressConfigFile">stresstest.xml</Parameter>
+      <Parameter name="pricingEnginesFile">pricingengine_sensi_seed2.xml</Parameter>
+      <Parameter name="scenarioOutputFile">stresstest.csv</Parameter>
+      <Parameter name="outputThreshold">0</Parameter>
+    </Analytic>
+  </Analytics>
+</ORE>

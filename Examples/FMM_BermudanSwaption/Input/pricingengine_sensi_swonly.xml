@@ -1,7 +1,8 @@
 <?xml version="1.0"?>
-<!-- FMM calibrated jointly to the coterminal deal-strike swaptions and to the USD-SOFR optionlets
-     stripped by the market (one ATM caplet per quarterly grid period, A3 joint bootstrap; the
-     residuals of both baskets are reported, not forced). -->
+<!-- FMM for the sensitivity ladders with the swaption-only calibration (no cap/floor basket): the
+     control run for the vega redistribution of the joint basket. Otherwise as
+     pricingengine_sensi.xml: retrained policy, deal-strike coterminal swaptions, 8k / 16k paths, no
+     dual bound, fixed seeds. Cap/floor vega is inactive by construction here. -->
 <PricingEngines>
   <Product type="Swap">
     <Model>DiscountedCashflows</Model>
@@ -14,7 +15,7 @@
     <ModelParameters>
       <Parameter name="Calibration">Bootstrap</Parameter>
       <Parameter name="CalibrationStrategy">CoterminalDealStrike</Parameter>
-      <Parameter name="CapFloorBasket">ATM</Parameter>
+      <Parameter name="CapFloorBasket">None</Parameter>
       <Parameter name="JointMaxIterations">50</Parameter>
       <Parameter name="JointToleranceBp">0.1</Parameter>
       <Parameter name="Tolerance">0.20</Parameter>
@@ -31,19 +32,17 @@
     </ModelParameters>
     <Engine>LSM</Engine>
     <EngineParameters>
-      <Parameter name="TrainingPaths">16384</Parameter>
-      <Parameter name="ValuationPaths">32768</Parameter>
+      <Parameter name="TrainingPaths">8192</Parameter>
+      <Parameter name="ValuationPaths">16384</Parameter>
       <Parameter name="TrainingSeed">42</Parameter>
       <Parameter name="ValuationSeed">424242</Parameter>
       <Parameter name="BasisOrder">2</Parameter>
-      <Parameter name="DualBound">true</Parameter>
-      <Parameter name="DualOuterPaths">512</Parameter>
-      <Parameter name="DualInnerPaths">64</Parameter>
-      <Parameter name="DualSeed">20260920</Parameter>
+      <Parameter name="DualBound">false</Parameter>
+      <Parameter name="PolicyMode">Retrain</Parameter>
     </EngineParameters>
   </Product>
   <GlobalParameters>
-    <Parameter name="GenerateAdditionalResults">true</Parameter>
+    <Parameter name="GenerateAdditionalResults">false</Parameter>
     <Parameter name="ContinueOnCalibrationError">false</Parameter>
   </GlobalParameters>
 </PricingEngines>

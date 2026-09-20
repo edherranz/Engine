@@ -1,7 +1,8 @@
 <?xml version="1.0"?>
-<!-- FMM calibrated jointly to the coterminal deal-strike swaptions and to the USD-SOFR optionlets
-     stripped by the market (one ATM caplet per quarterly grid period, A3 joint bootstrap; the
-     residuals of both baskets are reported, not forced). -->
+<!-- FMM for the sensitivity ladders: retrained policy on every valuation, deal-strike coterminal
+     swaptions plus the ATM SOFR optionlets (so that swaption and cap/floor vegas are both active),
+     lighter path budget than the pricing run, no dual bound (paired common random numbers keep the
+     bump noise small). -->
 <PricingEngines>
   <Product type="Swap">
     <Model>DiscountedCashflows</Model>
@@ -31,19 +32,17 @@
     </ModelParameters>
     <Engine>LSM</Engine>
     <EngineParameters>
-      <Parameter name="TrainingPaths">16384</Parameter>
-      <Parameter name="ValuationPaths">32768</Parameter>
-      <Parameter name="TrainingSeed">42</Parameter>
-      <Parameter name="ValuationSeed">424242</Parameter>
+      <Parameter name="TrainingPaths">8192</Parameter>
+      <Parameter name="ValuationPaths">16384</Parameter>
+      <Parameter name="TrainingSeed">1136</Parameter>
+      <Parameter name="ValuationSeed">500248</Parameter>
       <Parameter name="BasisOrder">2</Parameter>
-      <Parameter name="DualBound">true</Parameter>
-      <Parameter name="DualOuterPaths">512</Parameter>
-      <Parameter name="DualInnerPaths">64</Parameter>
-      <Parameter name="DualSeed">20260920</Parameter>
+      <Parameter name="DualBound">false</Parameter>
+      <Parameter name="PolicyMode">Retrain</Parameter>
     </EngineParameters>
   </Product>
   <GlobalParameters>
-    <Parameter name="GenerateAdditionalResults">true</Parameter>
+    <Parameter name="GenerateAdditionalResults">false</Parameter>
     <Parameter name="ContinueOnCalibrationError">false</Parameter>
   </GlobalParameters>
 </PricingEngines>

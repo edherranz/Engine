@@ -88,7 +88,7 @@ void FmmData::reset() {
     noticeConvention_ = Preceding;
     capFloorBasket_ = "None";
     capFloorHorizon_ = 0 * Days;
-    jointMaxIterations_ = 10;
+    jointMaxIterations_ = 50;
     jointToleranceBp_ = 0.1;
     mc_ = McCorrection();
     subSteps_ = 1;
@@ -169,7 +169,7 @@ void FmmData::fromXML(XMLNode* node) {
     noticeConvention_ = parseBusinessDayConvention(XMLUtils::getChildValue(node, "NoticeConvention", false, "Preceding"));
     capFloorBasket_ = XMLUtils::getChildValue(node, "CapFloorBasket", false, "None");
     capFloorHorizon_ = parsePeriod(XMLUtils::getChildValue(node, "CapFloorHorizon", false, "0D"));
-    jointMaxIterations_ = static_cast<Size>(XMLUtils::getChildValueAsInt(node, "JointMaxIterations", false, 10));
+    jointMaxIterations_ = static_cast<Size>(XMLUtils::getChildValueAsInt(node, "JointMaxIterations", false, 50));
     jointToleranceBp_ = XMLUtils::getChildValueAsDouble(node, "JointToleranceBp", false, 0.1);
 
     if (XMLNode* optionsNode = XMLUtils::getChildNode(node, "CalibrationSwaptions")) {

@@ -75,6 +75,8 @@ std::map<std::string, QuantLib::ext::any> FmmCalibrationInfo::additionalResults(
         m["fmmCalibrationCapletModelVols"] = capletModelVols;
         m["fmmJointIterations"] = static_cast<Real>(jointIterations);
         m["fmmJointConverged"] = jointConverged;
+        m["fmmJointStationary"] = jointStationary;
+        m["fmmJointLastParameterChange"] = jointLastParameterChange;
         m["fmmCapletMaxResidualBp"] = capletMaxResidualBp;
     }
     m["fmmGridPeriods"] = static_cast<Real>(gridPeriods);
@@ -352,6 +354,8 @@ void FmmBuilder::calibrate() const {
                                                    data->jointToleranceBp(), method);
                 info_.jointIterations = rep.iterations;
                 info_.jointConverged = rep.converged;
+                info_.jointStationary = rep.stationary;
+                info_.jointLastParameterChange = rep.lastParameterChange;
             } else {
                 QL_REQUIRE(targets.size() == v.a.size(),
                            "FmmBuilder: bootstrap needs one volatility segment per calibration swaption, got "
