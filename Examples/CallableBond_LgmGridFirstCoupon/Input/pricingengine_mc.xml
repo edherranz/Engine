@@ -1,0 +1,46 @@
+<?xml version="1.0"?>
+<!-- Cross-asset model Monte Carlo callable bond engine (Longstaff-Schwartz), as in Examples/Products -->
+<PricingEngines>
+  <Product type="Bond">
+    <Model>DiscountedCashflows</Model>
+    <ModelParameters/>
+    <Engine>DiscountingRiskyBondEngine</Engine>
+    <EngineParameters>
+      <Parameter name="TimestepPeriod">6M</Parameter>
+    </EngineParameters>
+  </Product>
+  <Product type="CallableBond">
+    <Model>CrossAssetModel</Model>
+    <ModelParameters>
+      <Parameter name="Calibration">Bootstrap</Parameter>
+      <Parameter name="CalibrationStrategy">CoterminalATM</Parameter>
+      <Parameter name="ReferenceCalibrationGrid">1Y,2Y,3Y,4Y</Parameter>
+      <Parameter name="Reversion">0.02</Parameter>
+      <Parameter name="ReversionType">HullWhite</Parameter>
+      <Parameter name="Volatility">0.01</Parameter>
+      <Parameter name="VolatilityType">Hagan</Parameter>
+      <Parameter name="ShiftHorizon">0.5</Parameter>
+      <Parameter name="Tolerance">0.1</Parameter>
+      <Parameter name="EnableCredit">false</Parameter>
+      <Parameter name="Credit_Volatility">0.01</Parameter>
+      <Parameter name="Credit_Reversion">0.01</Parameter>
+    </ModelParameters>
+    <Engine>MC</Engine>
+    <EngineParameters>
+      <Parameter name="Training.Sequence">SobolBrownianBridge</Parameter>
+      <Parameter name="Training.Seed">42</Parameter>
+      <Parameter name="Training.Samples">20000</Parameter>
+      <Parameter name="Pricing.Sequence">SobolBrownianBridge</Parameter>
+      <Parameter name="Pricing.Seed">17</Parameter>
+      <Parameter name="Pricing.Samples">20000</Parameter>
+      <Parameter name="Training.BasisFunction">Monomial</Parameter>
+      <Parameter name="Training.BasisFunctionOrder">3</Parameter>
+      <Parameter name="BrownianBridgeOrdering">Steps</Parameter>
+      <Parameter name="SobolDirectionIntegers">JoeKuoD7</Parameter>
+    </EngineParameters>
+  </Product>
+  <GlobalParameters>
+    <Parameter name="GenerateAdditionalResults">true</Parameter>
+    <Parameter name="ContinueOnCalibrationError">true</Parameter>
+  </GlobalParameters>
+</PricingEngines>

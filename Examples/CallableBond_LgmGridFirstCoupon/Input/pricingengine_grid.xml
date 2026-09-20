@@ -1,0 +1,37 @@
+<?xml version="1.0"?>
+<!-- LGM callable bond engine, event-time grid (convolution solver, no intermediate time steps) -->
+<PricingEngines>
+  <Product type="Bond">
+    <Model>DiscountedCashflows</Model>
+    <ModelParameters/>
+    <Engine>DiscountingRiskyBondEngine</Engine>
+    <EngineParameters>
+      <Parameter name="TimestepPeriod">6M</Parameter>
+    </EngineParameters>
+  </Product>
+  <Product type="CallableBond">
+    <Model>LGM</Model>
+    <ModelParameters>
+      <Parameter name="Calibration">Bootstrap</Parameter>
+      <Parameter name="CalibrationStrategy">CoterminalATM</Parameter>
+      <Parameter name="ReferenceCalibrationGrid">1Y,2Y,3Y,4Y</Parameter>
+      <Parameter name="Reversion">0.02</Parameter>
+      <Parameter name="ReversionType">HullWhite</Parameter>
+      <Parameter name="Volatility">0.01</Parameter>
+      <Parameter name="VolatilityType">Hagan</Parameter>
+      <Parameter name="ShiftHorizon">0.5</Parameter>
+      <Parameter name="Tolerance">0.1</Parameter>
+    </ModelParameters>
+    <Engine>Grid</Engine>
+    <EngineParameters>
+      <Parameter name="sy">5.0</Parameter>
+      <Parameter name="ny">30</Parameter>
+      <Parameter name="sx">5.0</Parameter>
+      <Parameter name="nx">30</Parameter>
+    </EngineParameters>
+  </Product>
+  <GlobalParameters>
+    <Parameter name="GenerateAdditionalResults">true</Parameter>
+    <Parameter name="ContinueOnCalibrationError">true</Parameter>
+  </GlobalParameters>
+</PricingEngines>
