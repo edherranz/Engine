@@ -344,6 +344,24 @@ void NumericLgmCallableBondEngineBase::calculate() const {
 
     // 12 set the result values
 
+    // cash flows that are still open were excluded from the underlying at their own pay time
+    // (coupon ratio zero at the first event after the valuation date) and never revisited,
+    // because the loop above does not process the reference date: add their time-zero value.
+    // Flows that sit in the final provisional sum (part of the underlying at the last step but
+    // not estimable there) keep their status Open as well and must not be added again.
+    {
+        const Real t_last = grid.size() > 1 ? grid[1] : 0.0;
+        for (Size j = 0; j < cashflows.size(); ++j) {
+            if (cashflowStatus[j] != CashflowStatus::Open || cashflows[j].payDate <= today ||
+                events.time(cashflows[j].payDate) <= t_fwd_cutoff)
+                continue;
+            if (cashflows[j].isPartOfUnderlying(t_last) && cashflows[j].couponRatio(t_last) > 0.0)
+                continue; // accounted for in provisionalNpv
+            underlyingNpv += cashflows[j].pv(lgmv, 0.0, solver_->stateGrid(0.0), effDiscountCurve);
+            cashflowStatus[j] = CashflowStatus::Done;
+        }
+    }
+
     Real totalUnderlyingNpv = underlyingNpv.at(0);
     for (auto const& c : cache) {
         if (c.initialised())
