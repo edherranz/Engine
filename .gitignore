@@ -343,6 +343,7 @@ QuantExt/qle/gitversion.hpp
 # Examples output
 ##########################
 Examples/*/Output/
+Examples/*/Output_*/
 logs/
 
 Examples/**/pricingstats.csv

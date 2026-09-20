@@ -1,2 +1,0 @@
-#TradeId,TradeType,Maturity,MaturityTime,NPV,NpvCurrency,NPV(Base),BaseCurrency,Notional,NotionalCurrency,Notional(Base),NettingSet,CounterParty
-FMM_CALLABLE_BOND_USD_4.5_2030,CallableBond,2030-02-11,5.002740,9901661.469486,USD,9901661.469486,USD,10000000.00,USD,10000000.00,NS,CPTY
