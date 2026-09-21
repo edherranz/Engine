@@ -11,6 +11,7 @@
     <SwaptionVolatilitiesId>default</SwaptionVolatilitiesId>
     <CapFloorVolatilitiesId>default</CapFloorVolatilitiesId>
     <DefaultCurvesId>default</DefaultCurvesId>
+    <YieldCurvesId>default</YieldCurvesId>
   </Configuration>
   <DiscountingCurves id="default">
     <DiscountingCurve currency="USD">Yield/USD/USD-SOFR</DiscountingCurve>
@@ -33,6 +34,10 @@
   <CapFloorVolatilities id="default">
     <CapFloorVolatility key="USD-SOFR">CapFloorVolatility/USD-SOFR/USD-SOFR</CapFloorVolatility>
   </CapFloorVolatilities>
+  <YieldCurves id="default">
+    <!-- discount curve of the public CDS curve configuration (Products curveconfig) -->
+    <YieldCurve name="USD-FedFunds">Yield/USD/USD-FedFunds</YieldCurve>
+  </YieldCurves>
   <DefaultCurves id="default">
     <DefaultCurve name="RED:007G93|SNRFOR|USD|XR14">Default/USD/RED:007G93|SNRFOR|USD|XR14</DefaultCurve>
   </DefaultCurves>

@@ -3,13 +3,16 @@
      10,000 samples (owner decision of 2026-09-20), no close-out lag (baseline). The FMM cube run
      reads Parameters and writes cube / scenario data on this grid; the XVA run with simulation off
      consumes them with the SAME file (the grid configuration must match the cube). The
-     CrossAssetModel block is the matched LGM comparator (1F, coterminal deal-strike basket of the
+     Market block: curves and the SOFR swap index family; the swaption surfaces are NOT simulated
+     (ORE's scenario generator does not feed simulated swaption or cap/floor surfaces and crashes on
+     them) and there is no cap/floor block. The CrossAssetModel block is the matched LGM comparator (1F, coterminal deal-strike basket of the
      Bermudan, Hull-White reversion 3%) used by ore_lgm_classic.xml / ore_lgm_amc.xml. -->
 <Simulation>
   <Parameters>
     <Discretization>Exact</Discretization>
     <Grid>25,3M</Grid>
     <Calendar>US</Calendar>
+    <DayCounter>Actual/365 (Fixed)</DayCounter>
     <Sequence>MersenneTwister</Sequence>
     <Scenario>Simple</Scenario>
     <Seed>42</Seed>
@@ -79,22 +82,14 @@
       </SwapIndex>
     </SwapIndices>
     <SwaptionVolatilities>
-      <Simulate>true</Simulate>
+      <Simulate>false</Simulate>
       <ReactionToTimeDecay>ForwardVariance</ReactionToTimeDecay>
       <Keys>
+        <Key>USD</Key>
         <Key>USD-SOFR</Key>
       </Keys>
       <Expiries>1Y,2Y,3Y,4Y,5Y,7Y,10Y</Expiries>
       <Terms>1Y,2Y,3Y,4Y,5Y,7Y,10Y</Terms>
     </SwaptionVolatilities>
-    <CapFloorVolatilities>
-      <Simulate>true</Simulate>
-      <ReactionToTimeDecay>ForwardVariance</ReactionToTimeDecay>
-      <Keys>
-        <Key>USD-SOFR</Key>
-      </Keys>
-      <Expiries>1Y,2Y,3Y,4Y,5Y,7Y,10Y</Expiries>
-      <Strikes>0.02,0.03,0.04,0.05,0.06</Strikes>
-    </CapFloorVolatilities>
   </Market>
 </Simulation>
