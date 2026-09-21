@@ -18,6 +18,8 @@
 
 #include <qle/models/fmmgrid.hpp>
 
+#include <sstream>
+
 #include <ql/errors.hpp>
 #include <ql/exercise.hpp>
 #include <ql/instruments/fixedvsfloatingswap.hpp>
@@ -138,7 +140,17 @@ FmmSwapSpec fmmSwapSpecFromSwaption(const FmmGrid& grid, const Swaption::argumen
         spec.fixedPayIndices.push_back(grid.index(fixedDates[c], toleranceDays, "fixed pay date"));
         spec.fixedAccruals.push_back(fdc.yearFraction(fixedDates[c - 1], fixedDates[c]));
     }
-    spec.validate(grid.numberOfRates());
+    try {
+        spec.validate(grid.numberOfRates());
+    } catch (const std::exception& e) {
+        std::ostringstream m;
+        m << e.what() << " (swap " << floatDates.front() << " -> " << floatDates.back() << " on grid indices " << spec.a
+          << " -> " << spec.b << "; fixed pay dates -> indices:";
+        for (Size c = 1; c < fixedDates.size(); ++c)
+            m << " " << fixedDates[c] << "->" << spec.fixedPayIndices[c - 1];
+        m << "; grid tolerance " << toleranceDays << " days)";
+        QL_FAIL(m.str());
+    }
     return spec;
 }
 

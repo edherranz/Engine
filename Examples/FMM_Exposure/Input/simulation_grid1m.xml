@@ -1,0 +1,95 @@
+<?xml version="1.0"?>
+<!-- A7 exposure grid: quarterly to 6.25Y (past the 6Y swap and the 5Y bond), Mersenne Twister,
+     10,000 samples (owner decision of 2026-09-20), no close-out lag (baseline). The FMM cube run
+     reads Parameters and writes cube / scenario data on this grid; the XVA run with simulation off
+     consumes them with the SAME file (the grid configuration must match the cube). The
+     Market block: curves and the SOFR swap index family; the swaption surfaces are NOT simulated
+     (ORE's scenario generator does not feed simulated swaption or cap/floor surfaces and crashes on
+     them) and there is no cap/floor block. The CrossAssetModel block is the matched LGM comparator (1F, coterminal deal-strike basket of the
+     Bermudan, Hull-White reversion 3%) used by ore_lgm_classic.xml / ore_lgm_amc.xml. -->
+<Simulation>
+  <Parameters>
+    <Discretization>Exact</Discretization>
+    <Grid>75,1M</Grid>
+    <Calendar>US</Calendar>
+    <DayCounter>Actual/365 (Fixed)</DayCounter>
+    <Sequence>MersenneTwister</Sequence>
+    <Scenario>Simple</Scenario>
+    <Seed>42</Seed>
+    <Samples>10000</Samples>
+  </Parameters>
+  <CrossAssetModel>
+    <DomesticCcy>USD</DomesticCcy>
+    <Currencies>
+      <Currency>USD</Currency>
+    </Currencies>
+    <BootstrapTolerance>0.0001</BootstrapTolerance>
+    <InterestRateModels>
+      <LGM ccy="USD">
+        <CalibrationType>Bootstrap</CalibrationType>
+        <Volatility>
+          <Calibrate>Y</Calibrate>
+          <VolatilityType>Hagan</VolatilityType>
+          <ParamType>Piecewise</ParamType>
+          <TimeGrid>1.0, 2.0, 3.0, 4.0</TimeGrid>
+          <InitialValue>0.01, 0.01, 0.01, 0.01, 0.01</InitialValue>
+        </Volatility>
+        <Reversion>
+          <Calibrate>N</Calibrate>
+          <ReversionType>HullWhite</ReversionType>
+          <ParamType>Constant</ParamType>
+          <TimeGrid/>
+          <InitialValue>0.03</InitialValue>
+        </Reversion>
+        <CalibrationSwaptions>
+          <Expiries>1Y,2Y,3Y,4Y,5Y</Expiries>
+          <Terms>2031-02-12,2031-02-12,2031-02-12,2031-02-12,2031-02-12</Terms>
+          <Strikes>0.04,0.04,0.04,0.04,0.04</Strikes>
+        </CalibrationSwaptions>
+        <ParameterTransformation>
+          <ShiftHorizon>0.0</ShiftHorizon>
+          <Scaling>1.0</Scaling>
+        </ParameterTransformation>
+      </LGM>
+    </InterestRateModels>
+    <InstantaneousCorrelations>
+      <Correlation factor1="IR:USD" factor2="IR:USD">1.0</Correlation>
+    </InstantaneousCorrelations>
+  </CrossAssetModel>
+  <Market>
+    <BaseCurrency>USD</BaseCurrency>
+    <Currencies>
+      <Currency>USD</Currency>
+    </Currencies>
+    <YieldCurves>
+      <Configuration>
+        <Tenors>3M,6M,9M,1Y,18M,2Y,3Y,4Y,5Y,6Y,7Y,10Y</Tenors>
+        <Interpolation>LogLinear</Interpolation>
+        <Extrapolation>Y</Extrapolation>
+      </Configuration>
+    </YieldCurves>
+    <Indices>
+      <Index>USD-SOFR</Index>
+    </Indices>
+    <SwapIndices>
+      <SwapIndex>
+        <Name>USD-CMS-SOFR-1Y</Name>
+        <DiscountingIndex>USD-SOFR</DiscountingIndex>
+      </SwapIndex>
+      <SwapIndex>
+        <Name>USD-CMS-SOFR-30Y</Name>
+        <DiscountingIndex>USD-SOFR</DiscountingIndex>
+      </SwapIndex>
+    </SwapIndices>
+    <SwaptionVolatilities>
+      <Simulate>false</Simulate>
+      <ReactionToTimeDecay>ForwardVariance</ReactionToTimeDecay>
+      <Keys>
+        <Key>USD</Key>
+        <Key>USD-SOFR</Key>
+      </Keys>
+      <Expiries>1Y,2Y,3Y,4Y,5Y,7Y,10Y</Expiries>
+      <Terms>1Y,2Y,3Y,4Y,5Y,7Y,10Y</Terms>
+    </SwaptionVolatilities>
+  </Market>
+</Simulation>

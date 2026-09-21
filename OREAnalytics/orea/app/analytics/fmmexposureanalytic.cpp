@@ -206,13 +206,11 @@ void FmmExposureAnalyticImpl::runAnalytic(const QuantLib::ext::shared_ptr<InMemo
     }
     QL_REQUIRE(!infos.empty(), "FmmExposureAnalytic: empty portfolio");
     contractual.insert(dates.back()); // the model grid covers the exposure horizon
-    // contractual dates within the mapping tolerance of an earlier one collapse (no tiny periods;
-    // the leg mapper absorbs the offset)
-    std::vector<Date> merged;
-    for (const Date& d : contractual)
-        if (merged.empty() || d - merged.back() > static_cast<Integer>(tol))
-            merged.push_back(d);
-    data->gridDates() = merged;
+    // every contractual date of every trade is a grid date (short periods between the trades'
+    // dates are admitted: the level volatility is scaled with the period length). Collapsing
+    // nearby dates onto one grid date would move flows across exposure dates: a coupon paid two
+    // days after an exposure date would be treated as already paid at that date.
+    data->gridDates().assign(contractual.begin(), contractual.end());
 
     // 2. the scenario model of the netting set
     CONSOLEW("FMM_EXPOSURE: Calibrate scenario model");
@@ -405,6 +403,8 @@ void FmmExposureAnalyticImpl::runAnalytic(const QuantLib::ext::shared_ptr<InMemo
         }
     }
     calReport->next().add("gridPeriods").add(std::to_string(fmmGrid->numberOfRates()));
+    for (Size j = 0; j < fmmGrid->dates().size(); ++j)
+        calReport->next().add("gridDate[" + std::to_string(j) + "]").add(ore::data::to_string(fmmGrid->dates()[j]));
     calReport->next().add("gridLastDate").add(ore::data::to_string(fmmGrid->dates().back()));
     calReport->next().add("exposureDates").add(std::to_string(dates.size()));
     calReport->next().add("samples").add(std::to_string(samples));

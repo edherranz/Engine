@@ -1,0 +1,60 @@
+<?xml version="1.0"?>
+<!-- A7 variant 'train4k' (acceptance 5 tables). A7 route 1, step 1: the fmmExposure analytic simulates the netting set on the FMM scenario model
+     MODELFILE and writes the native cube and aggregation scenario data (simulation section: files
+     and the grid; the classic simulation itself is off). -->
+<ORE>
+  <Setup>
+    <Parameter name="asofDate">2025-02-10</Parameter>
+    <Parameter name="inputPath">Input</Parameter>
+    <Parameter name="outputPath">Output/fmm_cube_train4k</Parameter>
+    <Parameter name="logFile">log.txt</Parameter>
+    <Parameter name="logMask">15</Parameter>
+    <Parameter name="marketDataFile">../../Products/Input/marketdata.csv</Parameter>
+    <Parameter name="fixingDataFile">../../Products/Input/fixings.csv</Parameter>
+    <Parameter name="implyTodaysFixings">N</Parameter>
+    <Parameter name="curveConfigFile">../../Products/Input/curveconfig.xml</Parameter>
+    <Parameter name="conventionsFile">../../Products/Input/conventions.xml</Parameter>
+    <Parameter name="marketConfigFile">todaysmarket.xml</Parameter>
+    <Parameter name="pricingEnginesFile">pricingengine.xml</Parameter>
+    <Parameter name="portfolioFile">portfolio.xml</Parameter>
+    <Parameter name="observationModel">None</Parameter>
+    <Parameter name="continueOnError">false</Parameter>
+  </Setup>
+  <Markets>
+    <Parameter name="lgmcalibration">default</Parameter>
+    <Parameter name="fxcalibration">default</Parameter>
+    <Parameter name="pricing">default</Parameter>
+    <Parameter name="simulation">default</Parameter>
+  </Markets>
+  <Analytics>
+    <Analytic type="npv">
+      <Parameter name="active">Y</Parameter>
+      <Parameter name="baseCurrency">USD</Parameter>
+      <Parameter name="outputFileName">npv.csv</Parameter>
+      <Parameter name="additionalResults">Y</Parameter>
+    </Analytic>
+    <Analytic type="simulation">
+      <Parameter name="active">N</Parameter>
+      <Parameter name="simulationConfigFile">simulation.xml</Parameter>
+      <Parameter name="pricingEnginesFile">pricingengine.xml</Parameter>
+      <Parameter name="baseCurrency">USD</Parameter>
+      <Parameter name="cubeFile">cube.csv.gz</Parameter>
+      <Parameter name="aggregationScenarioDataFileName">scenariodata.csv.gz</Parameter>
+    </Analytic>
+    <Analytic type="fmmExposure">
+      <Parameter name="active">Y</Parameter>
+      <Parameter name="fmmScenarioModelFile">fmmscenariomodel_grid.xml</Parameter>
+      <Parameter name="trainingPaths">4096</Parameter>
+      <Parameter name="trainingSeed">4242</Parameter>
+      <Parameter name="trainingSequence">MersenneTwister</Parameter>
+      <Parameter name="policyTrainingPaths">16384</Parameter>
+      <Parameter name="policyValuationPaths">16384</Parameter>
+      <Parameter name="policyTrainingSeed">42</Parameter>
+      <Parameter name="policyValuationSeed">4243</Parameter>
+      <Parameter name="regressionOrder">2</Parameter>
+      <Parameter name="minRegressionPaths">100</Parameter>
+      <Parameter name="includeFlowsOnExposureDate">false</Parameter>
+      <Parameter name="calibrationTolerance">0.2</Parameter>
+    </Analytic>
+  </Analytics>
+</ORE>
