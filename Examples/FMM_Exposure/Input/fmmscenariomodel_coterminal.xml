@@ -21,7 +21,8 @@
     <InitialValue>0.0025</InitialValue>
   </Volatility>
   <CalibrationSwaptions>
-    <Expiries>1Y,2Y,3Y,4Y,5Y</Expiries>
+    <!-- the Bermudan's exercise dates, so that the coterminal helpers run to 2031-02-12 without a stub -->
+    <Expiries>2026-02-12,2027-02-12,2028-02-14,2029-02-12,2030-02-12</Expiries>
     <Terms>2031-02-12,2031-02-12,2031-02-12,2031-02-12,2031-02-12</Terms>
     <Strikes>0.04,0.04,0.04,0.04,0.04</Strikes>
   </CalibrationSwaptions>

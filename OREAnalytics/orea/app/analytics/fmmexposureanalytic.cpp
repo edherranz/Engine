@@ -294,7 +294,10 @@ void FmmExposureAnalyticImpl::runAnalytic(const QuantLib::ext::shared_ptr<InMemo
     auto asd = QuantLib::ext::make_shared<InMemoryAggregationScenarioData>(dates.size(), samples);
     for (Size i = 0; i < infos.size(); ++i) {
         const Size idx = cube->idsAndIndexes().at(infos[i].id);
-        cube->setT0(infos[i].sign * res.t0Values[i], idx, 0);
+        // T0 slot: the direct valuation on the scenario model - the exact curve value for a vanilla
+        // structure, the exposure-path policy value (Monte Carlo) for a callable one
+        const Real t0 = trades[i].instrument.rights.empty() ? res.t0CurveValues[i] : res.t0Values[i];
+        cube->setT0(infos[i].sign * t0, idx, 0);
         for (Size d = 0; d < dates.size(); ++d)
             for (Size n = 0; n < samples; ++n)
                 cube->set(infos[i].sign * res.deflatedValues[i][d * samples + n], idx, d, n, 0);
@@ -336,8 +339,8 @@ void FmmExposureAnalyticImpl::runAnalytic(const QuantLib::ext::shared_ptr<InMemo
             .add(pricingNpv)
             .add(lsmValue[i])
             .add(lsmValueSe[i])
-            .add(infos[i].sign * res.t0Values[i])
-            .add(res.t0ValuesSe[i])
+            .add(infos[i].sign * (trades[i].instrument.rights.empty() ? res.t0CurveValues[i] : res.t0Values[i]))
+            .add(trades[i].instrument.rights.empty() ? 0.0 : res.t0ValuesSe[i])
             .add(infos[i].sign * res.t0CurveValues[i])
             .add(infos[i].issuerSpread);
     }
