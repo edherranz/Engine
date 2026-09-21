@@ -76,6 +76,20 @@ private:
     Date today_;
 };
 
+//! ORE / QuantLib legs with signs (+1 receive, -1 pay from the holder's view) onto a vanilla
+//! Cancel-style instrument without rights (a swap): the flow set the LSM helpers and the exposure
+//! engine value exactly
+FmmCallableInstrument fmmMapLegs(const std::vector<Leg>& legs, const std::vector<Real>& signs, const FmmGrid& grid,
+                                 const Natural toleranceDays, const Date& today);
+
+//! MultiLegOption arguments onto an Enter-style instrument from the option holder's view with one
+//! right per future exercise (notice) date; ORE passes the notice dates as exercise dates and the
+//! settlement (swap entry) dates alongside. Without an exercise object, or with no right left, the
+//! returned instrument has no rights. usedSettle receives the settlement dates of the rights.
+FmmCallableInstrument fmmMapMultiLegOption(const MultiLegOption::arguments& args, const FmmGrid& grid,
+                                           const Natural toleranceDays, const Date& today,
+                                           std::vector<Date>& usedSettle);
+
 class FmmLsmMultiLegOptionEngine : public MultiLegOption::engine {
 public:
     FmmLsmMultiLegOptionEngine(const QuantLib::ext::shared_ptr<ForwardMarketModel>& model,

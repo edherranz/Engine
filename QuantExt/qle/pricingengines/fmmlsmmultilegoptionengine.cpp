@@ -154,6 +154,78 @@ FmmLsmMultiLegOptionEngine::FmmLsmMultiLegOptionEngine(const QuantLib::ext::shar
         registerWith(o);
 }
 
+FmmCallableInstrument fmmMapLegs(const std::vector<Leg>& legs, const std::vector<Real>& signs, const FmmGrid& grid,
+                                 const Natural toleranceDays, const Date& today) {
+    QL_REQUIRE(legs.size() == signs.size(), "fmmMapLegs: " << legs.size() << " legs, " << signs.size() << " signs");
+    FmmCallableInstrument inst;
+    inst.style = FmmCallableInstrument::Style::Cancel;
+    FmmLegMapper mapper(grid, toleranceDays, today);
+    for (Size i = 0; i < legs.size(); ++i) {
+        std::ostringstream what;
+        what << "leg " << i;
+        mapper.addLeg(legs[i], signs[i] < 0.0 ? -1.0 : 1.0, inst, what.str());
+    }
+    QL_REQUIRE(inst.lastFlowIdx >= 1, "fmmMapLegs: no future cash flows");
+    return inst;
+}
+
+FmmCallableInstrument fmmMapMultiLegOption(const MultiLegOption::arguments& args, const FmmGrid& grid,
+                                           const Natural toleranceDays, const Date& today,
+                                           std::vector<Date>& usedSettle) {
+    QL_REQUIRE(args.legs.size() == args.payer.size(), "fmmMapMultiLegOption: inconsistent legs / payer vectors");
+    QL_REQUIRE(args.settlementType == Settlement::Physical,
+               "fmmMapMultiLegOption: physical settlement only (cash settlement is not supported)");
+    QL_REQUIRE(!args.midCouponExercise, "fmmMapMultiLegOption: mid-coupon exercise is not supported");
+    // flows from the OPTION HOLDER's view: receive legs with payer = false, pay legs with payer = true
+    std::vector<Real> signs;
+    for (const bool payer : args.payer)
+        signs.push_back(payer ? -1.0 : 1.0);
+    FmmCallableInstrument inst = fmmMapLegs(args.legs, signs, grid, toleranceDays, today);
+    inst.style = FmmCallableInstrument::Style::Enter;
+    usedSettle.clear();
+    if (!args.exercise)
+        return inst; // no exercise: the instrument is the underlying itself
+    QL_REQUIRE(args.exercise->type() != Exercise::American,
+               "fmmMapMultiLegOption: American exercise is not supported (grid-date Bermudan only)");
+    // exercise dates -> rights; every exercise date must be a grid date at which all legs have an
+    // accrual boundary, i.e. no coupon straddles it (checked through the flow mapping: a coupon
+    // with accrual start before and pay date after an exercise date would be mis-assigned)
+    // ORE passes the notice dates as the exercise dates and the settlement (swap entry) dates
+    // alongside: a right decides at the notice grid date and enters the flows after the settlement
+    // grid date (A4 notice-period rights, adapted payoff in the dual bound)
+    const std::vector<Date>& noticeDates = args.exercise->dates();
+    const std::vector<Date> settleDates = args.settlementDates.empty() ? noticeDates : args.settlementDates;
+    QL_REQUIRE(settleDates.size() == noticeDates.size(), "fmmMapMultiLegOption: " << settleDates.size()
+                                                                                  << " settlement dates for "
+                                                                                  << noticeDates.size()
+                                                                                  << " exercise dates");
+    for (Size i = 0; i < noticeDates.size(); ++i) {
+        const Date& dn = noticeDates[i];
+        const Date& ds = settleDates[i];
+        if (dn <= today)
+            continue;
+        QL_REQUIRE(ds >= dn, "fmmMapMultiLegOption: settlement date " << ds << " before notice date " << dn);
+        const Size noticeIdx = grid.index(dn, toleranceDays, "exercise (notice) date");
+        const Size settleIdx = std::max(noticeIdx, grid.index(ds, toleranceDays, "settlement date"));
+        if (settleIdx >= inst.lastFlowIdx)
+            continue; // entry at or after the last flow has no value
+        for (const auto& f : inst.compoundedFloats)
+            QL_REQUIRE(!(f.startIdx < settleIdx && f.payIdx > settleIdx),
+                       "fmmMapMultiLegOption: settlement date "
+                           << ds << " falls inside a compounded coupon period (" << grid.dates()[f.startIdx] << " - "
+                           << grid.dates()[f.endIdx] << "); whole-period exercise required");
+        inst.rights.push_back({noticeIdx, settleIdx, 0.0});
+        usedSettle.push_back(ds);
+    }
+    // notice indices strictly ascending (duplicates after mapping are collapsed)
+    std::vector<FmmCallableInstrument::Right> rights;
+    for (const auto& r : inst.rights)
+        if (rights.empty() || r.noticeIdx > rights.back().noticeIdx)
+            rights.push_back(r);
+    inst.rights = rights;
+    return inst;
+}
+
 void FmmLsmMultiLegOptionEngine::calculate() const {
     const auto& p = *model_->parametrization();
     const Date today = grid_->referenceDate();
@@ -165,73 +237,18 @@ void FmmLsmMultiLegOptionEngine::calculate() const {
     for (const auto& c : arguments_.currency)
         QL_REQUIRE(c == p.currency(), "FmmLsmMultiLegOptionEngine: leg currency " << c << " != model currency "
                                                                                   << p.currency());
-    QL_REQUIRE(arguments_.settlementType == Settlement::Physical,
-               "FmmLsmMultiLegOptionEngine: physical settlement only (cash settlement is not supported)");
-    QL_REQUIRE(!arguments_.midCouponExercise, "FmmLsmMultiLegOptionEngine: mid-coupon exercise is not supported");
 
-    // flows from the OPTION HOLDER's view: receive legs with payer = false, pay legs with payer = true
-    FmmCallableInstrument inst;
-    inst.style = FmmCallableInstrument::Style::Enter;
-    FmmLegMapper mapper(*grid_, config_.gridToleranceDays, today);
-    for (Size i = 0; i < arguments_.legs.size(); ++i) {
-        std::ostringstream what;
-        what << "leg " << i;
-        mapper.addLeg(arguments_.legs[i], arguments_.payer[i] ? -1.0 : 1.0, inst, what.str());
-    }
-    QL_REQUIRE(inst.lastFlowIdx >= 1, "FmmLsmMultiLegOptionEngine: no future cash flows");
+    std::vector<Date> usedSettle;
+    FmmCallableInstrument inst = fmmMapMultiLegOption(arguments_, *grid_, config_.gridToleranceDays, today, usedSettle);
     const Real underlyingNpv = FmmLegMapper::underlyingCurveValue(inst, p);
     results_.underlyingNpv = underlyingNpv;
     results_.additionalResults["underlyingNpv"] = underlyingNpv;
-
-    if (!arguments_.exercise) {
-        // no exercise: the instrument is the underlying itself
-        results_.value = underlyingNpv;
-        results_.additionalResults["fmmGridMaxDateMismatchDays"] = static_cast<Real>(grid_->maxMismatchDays());
-        return;
-    }
-    QL_REQUIRE(arguments_.exercise->type() != Exercise::American,
-               "FmmLsmMultiLegOptionEngine: American exercise is not supported (grid-date Bermudan only)");
-    // exercise dates -> rights; every exercise date must be a grid date at which all legs have an
-    // accrual boundary, i.e. no coupon straddles it (checked through the flow mapping: a coupon
-    // with accrual start before and pay date after an exercise date would be mis-assigned)
-    // ORE passes the notice dates as the exercise dates and the settlement (swap entry) dates
-    // alongside: a right decides at the notice grid date and enters the flows after the settlement
-    // grid date (A4 notice-period rights, adapted payoff in the dual bound)
-    const std::vector<Date>& noticeDates = arguments_.exercise->dates();
-    const std::vector<Date> settleDates = arguments_.settlementDates.empty() ? noticeDates : arguments_.settlementDates;
-    QL_REQUIRE(settleDates.size() == noticeDates.size(), "FmmLsmMultiLegOptionEngine: "
-                                                             << settleDates.size() << " settlement dates for "
-                                                             << noticeDates.size() << " exercise dates");
-    std::vector<Date> usedSettle;
-    for (Size i = 0; i < noticeDates.size(); ++i) {
-        const Date& dn = noticeDates[i];
-        const Date& ds = settleDates[i];
-        if (dn <= today)
-            continue;
-        QL_REQUIRE(ds >= dn, "FmmLsmMultiLegOptionEngine: settlement date " << ds << " before notice date " << dn);
-        const Size noticeIdx = grid_->index(dn, config_.gridToleranceDays, "exercise (notice) date");
-        const Size settleIdx = std::max(noticeIdx, grid_->index(ds, config_.gridToleranceDays, "settlement date"));
-        if (settleIdx >= inst.lastFlowIdx)
-            continue; // entry at or after the last flow has no value
-        for (const auto& f : inst.compoundedFloats)
-            QL_REQUIRE(!(f.startIdx < settleIdx && f.payIdx > settleIdx),
-                       "FmmLsmMultiLegOptionEngine: settlement date "
-                           << ds << " falls inside a compounded coupon period (" << grid_->dates()[f.startIdx] << " - "
-                           << grid_->dates()[f.endIdx] << "); whole-period exercise required");
-        inst.rights.push_back({noticeIdx, settleIdx, 0.0});
-        usedSettle.push_back(ds);
-    }
     if (inst.rights.empty()) {
-        results_.value = 0.0;
+        // no exercise object: the instrument is the underlying itself; no right left: worthless
+        results_.value = arguments_.exercise ? 0.0 : underlyingNpv;
         results_.additionalResults["fmmGridMaxDateMismatchDays"] = static_cast<Real>(grid_->maxMismatchDays());
         return;
     }
-    // notice indices strictly ascending (duplicates after mapping are collapsed)
-    std::vector<FmmCallableInstrument::Right> rights;
-    for (const auto& r : inst.rights)
-        if (rights.empty() || r.noticeIdx > rights.back().noticeIdx)
-            rights.push_back(r);
-    inst.rights = rights;
 
     FmmLsmPricer pricer(model_, inst, config_.lsm);
     FmmLsmResult res;

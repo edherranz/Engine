@@ -27,7 +27,7 @@
 
 namespace QuantExt {
 
-void FmmCallableInstrument::validate(const Size M) const {
+void FmmCallableInstrument::validate(const Size M, const bool requireRights) const {
     QL_REQUIRE(lastFlowIdx >= 1 && lastFlowIdx <= M, "FmmCallableInstrument: lastFlowIdx out of range");
     QL_REQUIRE(fixedFlows.size() == M + 1 && floatWeights.size() == M + 1,
                "FmmCallableInstrument: flow vectors must have size M+1");
@@ -35,7 +35,7 @@ void FmmCallableInstrument::validate(const Size M) const {
         QL_REQUIRE(f.startIdx < f.endIdx && f.endIdx <= f.payIdx && f.payIdx <= lastFlowIdx,
                    "FmmCallableInstrument: compounded coupon indices (" << f.startIdx << ", " << f.endIdx << "] paid at "
                                                                         << f.payIdx << " are invalid");
-    QL_REQUIRE(!rights.empty(), "FmmCallableInstrument: no exercise rights");
+    QL_REQUIRE(!requireRights || !rights.empty(), "FmmCallableInstrument: no exercise rights");
     for (Size r = 0; r < rights.size(); ++r) {
         QL_REQUIRE(rights[r].noticeIdx >= 1 && rights[r].noticeIdx < lastFlowIdx,
                    "FmmCallableInstrument: notice index " << rights[r].noticeIdx << " out of range");
@@ -50,7 +50,7 @@ FmmLsmPricer::FmmLsmPricer(const QuantLib::ext::shared_ptr<ForwardMarketModel>& 
                            const FmmCallableInstrument& instrument, const FmmLsmConfig& config)
     : model_(model), instrument_(instrument), config_(config), M_(model->parametrization()->numberOfRates()) {
     QL_REQUIRE(model_, "FmmLsmPricer: model is null");
-    instrument_.validate(M_);
+    instrument_.validate(M_, false); // vanilla structures are admitted for the flow / marking helpers
     QL_REQUIRE(config_.basisOrder == 1 || config_.basisOrder == 2, "FmmLsmPricer: basisOrder must be 1 or 2");
     if (instrument_.style == FmmCallableInstrument::Style::Cancel)
         underlyingCurve_ = fmmUnderlyingCurveValue(instrument_, *model_->parametrization());
@@ -236,6 +236,7 @@ Real FmmLsmPricer::pathValueAt(const PathData& d, const Integer exercisedRight) 
 }
 
 FmmLsmResult FmmLsmPricer::calculate() {
+    QL_REQUIRE(!instrument_.rights.empty(), "FmmLsmPricer::calculate: no exercise rights");
     const auto start = std::chrono::steady_clock::now();
     const bool enter = instrument_.style == FmmCallableInstrument::Style::Enter;
     const Size nRights = instrument_.rights.size();
@@ -329,6 +330,7 @@ FmmLsmResult FmmLsmPricer::summarize(const std::vector<PathData>& val, const std
 }
 
 FmmLsmResult FmmLsmPricer::valueWithPolicy(const FmmLsmPolicy& pol, const BigNatural seed) const {
+    QL_REQUIRE(!instrument_.rights.empty(), "FmmLsmPricer::valueWithPolicy: no exercise rights");
     QL_REQUIRE(pol.coefficients.size() == instrument_.rights.size(),
                "FmmLsmPricer::valueWithPolicy: policy rights (" << pol.coefficients.size()
                                                                 << ") do not align with instrument rights ("

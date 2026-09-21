@@ -1,0 +1,67 @@
+<?xml version="1.0"?>
+<!-- Matched LGM comparator engines for the classic exposure pipeline (full revaluation on every
+     scenario): 1F LGM, Hull-White reversion 3% as the scenario model, the Bermudan on its coterminal
+     deal-strike basket (grid engine), the callable bond on coterminal ATM swaptions (FD, no exercise
+     tracking on the path: a known limitation of the classic route for physically exercised
+     structures, see docs/A7_PLAN.md). -->
+<PricingEngines>
+  <Product type="Swap">
+    <Model>DiscountedCashflows</Model>
+    <ModelParameters/>
+    <Engine>DiscountingSwapEngine</Engine>
+    <EngineParameters/>
+  </Product>
+  <Product type="BermudanSwaption">
+    <Model>LGM</Model>
+    <ModelParameters>
+      <Parameter name="Calibration">Bootstrap</Parameter>
+      <Parameter name="CalibrationStrategy">CoterminalDealStrike</Parameter>
+      <Parameter name="Reversion">0.03</Parameter>
+      <Parameter name="ReversionType">HullWhite</Parameter>
+      <Parameter name="Volatility">0.01</Parameter>
+      <Parameter name="VolatilityType">Hagan</Parameter>
+      <Parameter name="ShiftHorizon">0.5</Parameter>
+      <Parameter name="Tolerance">0.20</Parameter>
+    </ModelParameters>
+    <Engine>Grid</Engine>
+    <EngineParameters>
+      <Parameter name="sy">5.0</Parameter>
+      <Parameter name="ny">30</Parameter>
+      <Parameter name="sx">5.0</Parameter>
+      <Parameter name="nx">30</Parameter>
+    </EngineParameters>
+  </Product>
+  <Product type="Bond">
+    <Model>DiscountedCashflows</Model>
+    <ModelParameters/>
+    <Engine>DiscountingRiskyBondEngine</Engine>
+    <EngineParameters>
+      <Parameter name="TimestepPeriod">6M</Parameter>
+    </EngineParameters>
+  </Product>
+  <Product type="CallableBond">
+    <Model>LGM</Model>
+    <ModelParameters>
+      <Parameter name="Calibration">Bootstrap</Parameter>
+      <Parameter name="CalibrationStrategy">CoterminalATM</Parameter>
+      <Parameter name="ReferenceCalibrationGrid">1Y,2Y,3Y,4Y</Parameter>
+      <Parameter name="Reversion">0.03</Parameter>
+      <Parameter name="ReversionType">HullWhite</Parameter>
+      <Parameter name="Volatility">0.01</Parameter>
+      <Parameter name="VolatilityType">Hagan</Parameter>
+      <Parameter name="ShiftHorizon">0.5</Parameter>
+      <Parameter name="Tolerance">0.20</Parameter>
+    </ModelParameters>
+    <Engine>FD</Engine>
+    <EngineParameters>
+      <Parameter name="Scheme">Douglas</Parameter>
+      <Parameter name="StateGridPoints">64</Parameter>
+      <Parameter name="TimeStepsPerYear">12</Parameter>
+      <Parameter name="MesherEpsilon">1e-4</Parameter>
+    </EngineParameters>
+  </Product>
+  <GlobalParameters>
+    <Parameter name="GenerateAdditionalResults">false</Parameter>
+    <Parameter name="ContinueOnCalibrationError">false</Parameter>
+  </GlobalParameters>
+</PricingEngines>

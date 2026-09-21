@@ -1,0 +1,39 @@
+<?xml version="1.0"?>
+<!-- A7 exposure test-bed: the trimmed USD-SOFR market of the A5 examples plus the counterparty's
+     public CDS curve (RED:007G93, senior USD, Products 2025-02-10 quotes). Trimmed USD-SOFR market on the Products 2025-02-10 data set: single-curve SOFR discounting (the
+     USD-SOFR index curve also serves as the bond reference curve), the SOFR swap index family and the USD-SOFR normal swaption smile (curve configuration,
+     conventions and quotes are shared with Examples/Products/Input). -->
+<TodaysMarket>
+  <Configuration id="default">
+    <DiscountingCurvesId>default</DiscountingCurvesId>
+    <IndexForwardingCurvesId>default</IndexForwardingCurvesId>
+    <SwapIndexCurvesId>default</SwapIndexCurvesId>
+    <SwaptionVolatilitiesId>default</SwaptionVolatilitiesId>
+    <CapFloorVolatilitiesId>default</CapFloorVolatilitiesId>
+    <DefaultCurvesId>default</DefaultCurvesId>
+  </Configuration>
+  <DiscountingCurves id="default">
+    <DiscountingCurve currency="USD">Yield/USD/USD-SOFR</DiscountingCurve>
+  </DiscountingCurves>
+  <IndexForwardingCurves id="default">
+    <Index name="USD-SOFR">Yield/USD/USD-SOFR</Index>
+  </IndexForwardingCurves>
+  <SwapIndexCurves id="default">
+    <SwapIndex name="USD-CMS-SOFR-1Y">
+      <Discounting>USD-SOFR</Discounting>
+    </SwapIndex>
+    <SwapIndex name="USD-CMS-SOFR-30Y">
+      <Discounting>USD-SOFR</Discounting>
+    </SwapIndex>
+  </SwapIndexCurves>
+  <SwaptionVolatilities id="default">
+    <SwaptionVolatility key="USD">SwaptionVolatility/USD-SOFR/USD-SOFR</SwaptionVolatility>
+    <SwaptionVolatility key="USD-SOFR">SwaptionVolatility/USD-SOFR/USD-SOFR</SwaptionVolatility>
+  </SwaptionVolatilities>
+  <CapFloorVolatilities id="default">
+    <CapFloorVolatility key="USD-SOFR">CapFloorVolatility/USD-SOFR/USD-SOFR</CapFloorVolatility>
+  </CapFloorVolatilities>
+  <DefaultCurves id="default">
+    <DefaultCurve name="RED:007G93|SNRFOR|USD|XR14">Default/USD/RED:007G93|SNRFOR|USD|XR14</DefaultCurve>
+  </DefaultCurves>
+</TodaysMarket>

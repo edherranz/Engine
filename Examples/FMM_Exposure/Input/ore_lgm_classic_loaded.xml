@@ -1,0 +1,63 @@
+<?xml version="1.0"?>
+<!-- File-route check (A7 acceptance 6): ORE's own classic LGM cube re-read with simulation off must
+     reproduce the in-memory XVA reports of ore_lgm_classic.xml. -->
+<ORE>
+  <Setup>
+    <Parameter name="asofDate">2025-02-10</Parameter>
+    <Parameter name="inputPath">Input</Parameter>
+    <Parameter name="outputPath">Output/lgm_classic_loaded</Parameter>
+    <Parameter name="logFile">log.txt</Parameter>
+    <Parameter name="logMask">15</Parameter>
+    <Parameter name="marketDataFile">../../Products/Input/marketdata.csv</Parameter>
+    <Parameter name="fixingDataFile">../../Products/Input/fixings.csv</Parameter>
+    <Parameter name="implyTodaysFixings">N</Parameter>
+    <Parameter name="curveConfigFile">../../Products/Input/curveconfig.xml</Parameter>
+    <Parameter name="conventionsFile">../../Products/Input/conventions.xml</Parameter>
+    <Parameter name="marketConfigFile">todaysmarket.xml</Parameter>
+    <Parameter name="pricingEnginesFile">pricingengine_lgm.xml</Parameter>
+    <Parameter name="portfolioFile">portfolio.xml</Parameter>
+    <Parameter name="observationModel">None</Parameter>
+    <Parameter name="continueOnError">false</Parameter>
+  </Setup>
+  <Markets>
+    <Parameter name="lgmcalibration">default</Parameter>
+    <Parameter name="fxcalibration">default</Parameter>
+    <Parameter name="pricing">default</Parameter>
+    <Parameter name="simulation">default</Parameter>
+  </Markets>
+  <Analytics>
+    <Analytic type="npv">
+      <Parameter name="active">Y</Parameter>
+      <Parameter name="baseCurrency">USD</Parameter>
+      <Parameter name="outputFileName">npv.csv</Parameter>
+    </Analytic>
+    <Analytic type="simulation">
+      <Parameter name="active">N</Parameter>
+      <Parameter name="simulationConfigFile">simulation_lgm2k.xml</Parameter>
+      <Parameter name="pricingEnginesFile">pricingengine_lgm.xml</Parameter>
+      <Parameter name="baseCurrency">USD</Parameter>
+    </Analytic>
+    <Analytic type="xva">
+      <Parameter name="active">Y</Parameter>
+      <Parameter name="csaFile">netting.xml</Parameter>
+      <Parameter name="cubeFile">../lgm_classic/cube.csv.gz</Parameter>
+      <Parameter name="scenarioFile">../lgm_classic/scenariodata.csv.gz</Parameter>
+      <Parameter name="baseCurrency">USD</Parameter>
+      <Parameter name="exposureProfiles">Y</Parameter>
+      <Parameter name="exposureProfilesByTrade">Y</Parameter>
+      <Parameter name="quantile">0.95</Parameter>
+      <Parameter name="calculationType">Symmetric</Parameter>
+      <Parameter name="allocationMethod">None</Parameter>
+      <Parameter name="marginalAllocationLimit">1.0</Parameter>
+      <Parameter name="exerciseNextBreak">N</Parameter>
+      <Parameter name="cva">Y</Parameter>
+      <Parameter name="dva">N</Parameter>
+      <Parameter name="fva">N</Parameter>
+      <Parameter name="colva">N</Parameter>
+      <Parameter name="collateralFloor">N</Parameter>
+      <Parameter name="mporCashFlowMode">BothPay</Parameter>
+      <Parameter name="rawCubeOutputFile">rawcube.csv</Parameter>
+      <Parameter name="netCubeOutputFile">netcube.csv</Parameter>
+    </Analytic>
+  </Analytics>
+</ORE>

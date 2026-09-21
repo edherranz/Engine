@@ -90,6 +90,7 @@ void FmmData::reset() {
     capFloorHorizon_ = 0 * Days;
     jointMaxIterations_ = 50;
     jointToleranceBp_ = 0.1;
+    bestFitTimeDependence_ = false;
     mc_ = McCorrection();
     subSteps_ = 1;
     gridToleranceDays_ = 3;
@@ -123,8 +124,10 @@ void FmmData::validate() const {
                    "FmmData: CalibrationType must be None, Bootstrap or BestFit");
     QL_REQUIRE(capFloorBasket_ == "None" || capFloorBasket_ == "ATM",
                "FmmData: CapFloorBasket must be None or ATM, got " << capFloorBasket_);
-    QL_REQUIRE(capFloorBasket_ == "None" || calibrationType_ == CalibrationType::Bootstrap,
-               "FmmData: a cap/floor basket needs CalibrationType Bootstrap (joint bootstrap)");
+    QL_REQUIRE(capFloorBasket_ == "None" || calibrationType_ == CalibrationType::Bootstrap ||
+                   (calibrationType_ == CalibrationType::BestFit && bestFitTimeDependence_),
+               "FmmData: a cap/floor basket needs CalibrationType Bootstrap (joint bootstrap) or BestFit with "
+               "BestFitTimeDependence (joint best fit)");
     QL_REQUIRE(jointMaxIterations_ >= 1 && jointToleranceBp_ > 0.0, "FmmData: joint iterations / tolerance invalid");
     if (calibrateVol_ && calibrationType_ != CalibrationType::None && capFloorBasket_ == "None")
         QL_REQUIRE(!optionExpiries_.empty(), "FmmData: volatility calibration needs calibration swaptions");
@@ -171,6 +174,7 @@ void FmmData::fromXML(XMLNode* node) {
     capFloorHorizon_ = parsePeriod(XMLUtils::getChildValue(node, "CapFloorHorizon", false, "0D"));
     jointMaxIterations_ = static_cast<Size>(XMLUtils::getChildValueAsInt(node, "JointMaxIterations", false, 50));
     jointToleranceBp_ = XMLUtils::getChildValueAsDouble(node, "JointToleranceBp", false, 0.1);
+    bestFitTimeDependence_ = XMLUtils::getChildValueAsBool(node, "BestFitTimeDependence", false, false);
 
     if (XMLNode* optionsNode = XMLUtils::getChildNode(node, "CalibrationSwaptions")) {
         optionExpiries() = XMLUtils::getChildrenValuesAsStrings(optionsNode, "Expiries", false);
@@ -225,6 +229,7 @@ XMLNode* FmmData::toXML(XMLDocument& doc) const {
         XMLUtils::addChild(doc, node, "CapFloorHorizon", ore::data::to_string(capFloorHorizon_));
         XMLUtils::addChild(doc, node, "JointMaxIterations", static_cast<int>(jointMaxIterations_));
         XMLUtils::addChild(doc, node, "JointToleranceBp", jointToleranceBp_);
+        XMLUtils::addChild(doc, node, "BestFitTimeDependence", bestFitTimeDependence_);
     }
     XMLNode* calibrationSwaptionsNode = XMLUtils::addChild(doc, node, "CalibrationSwaptions");
     XMLUtils::addGenericChildAsList(doc, calibrationSwaptionsNode, "Expiries", optionExpiries());

@@ -47,6 +47,7 @@ app/analytics/stresstestanalytic.cpp
 app/analytics/utilities.cpp
 app/analytics/varanalytic.cpp
 app/analytics/xvaanalytic.cpp
+app/analytics/fmmexposureanalytic.cpp
 app/analytics/xvaexplainanalytic.cpp
 app/analytics/xvasensitivityanalytic.cpp
 app/analytics/xvastressanalytic.cpp
@@ -273,6 +274,7 @@ app/analytics/stresstestanalytic.hpp
 app/analytics/utilities.hpp
 app/analytics/varanalytic.hpp
 app/analytics/xvaanalytic.hpp
+app/analytics/fmmexposureanalytic.hpp
 app/analytics/xvaexplainanalytic.hpp
 app/analytics/xvasensitivityanalytic.hpp
 app/analytics/xvastressanalytic.hpp

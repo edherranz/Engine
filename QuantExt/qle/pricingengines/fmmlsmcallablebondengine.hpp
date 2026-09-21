@@ -37,6 +37,14 @@
 
 namespace QuantExt {
 
+//! CallableBond arguments onto the ISSUER's Cancel-style instrument on the grid: every bond cash
+//! flow paid (negative), each future call a cancellation right (decision at the notice date, fee =
+//! -price x outstanding notional at the call date, calls on coupon pay dates only), the deterministic
+//! issuer spread as the discounting spread. noticeDates receives the decision dates of the rights.
+FmmCallableInstrument fmmMapCallableBond(const CallableBond::arguments& args, const FmmGrid& grid,
+                                         const Natural toleranceDays, const Date& today, const Real issuerSpread,
+                                         std::vector<Date>& noticeDates);
+
 class FmmLsmCallableBondEngine : public CallableBond::engine {
 public:
     FmmLsmCallableBondEngine(const QuantLib::ext::shared_ptr<ForwardMarketModel>& model,

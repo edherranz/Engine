@@ -45,6 +45,73 @@ FmmLsmCallableBondEngine::FmmLsmCallableBondEngine(const QuantLib::ext::shared_p
         registerWith(o);
 }
 
+FmmCallableInstrument fmmMapCallableBond(const CallableBond::arguments& args, const FmmGrid& grid,
+                                         const Natural toleranceDays, const Date& today, const Real issuerSpread,
+                                         std::vector<Date>& noticeDates) {
+    QL_REQUIRE(!args.perpetual, "fmmMapCallableBond: perpetual bonds are not supported");
+    QL_REQUIRE(args.putData.empty(), "fmmMapCallableBond: put rights are not supported in this release");
+    // issuer's view: every bond cash flow is paid (negative), calls are cancellation rights
+    FmmCallableInstrument inst;
+    inst.style = FmmCallableInstrument::Style::Cancel;
+    inst.issuerSpread = issuerSpread;
+    FmmLegMapper mapper(grid, toleranceDays, today);
+    mapper.addLeg(args.cashflows, -1.0, inst, "bond cash flows");
+    QL_REQUIRE(inst.lastFlowIdx >= 1, "fmmMapCallableBond: no future cash flows");
+
+    // outstanding notional at a call date: the nominal of the coupon accruing after it (or the
+    // last known notional); calls must fall on coupon pay dates, where the accrual is zero
+    std::vector<std::pair<Date, Real>> couponDates; // pay date, nominal of that coupon
+    for (const auto& cf : args.cashflows)
+        if (auto c = QuantLib::ext::dynamic_pointer_cast<Coupon>(cf))
+            couponDates.emplace_back(c->date(), c->nominal());
+    auto notionalAfter = [&](const Date& d) {
+        Real n = args.notionals.empty() ? Null<Real>() : args.notionals.front();
+        for (const auto& cf : args.cashflows)
+            if (auto c = QuantLib::ext::dynamic_pointer_cast<Coupon>(cf))
+                if (c->accrualStartDate() >= d) {
+                    n = c->nominal();
+                    break;
+                }
+        QL_REQUIRE(n != Null<Real>(), "fmmMapCallableBond: cannot determine the notional outstanding at " << d);
+        return n;
+    };
+    noticeDates.clear();
+    for (const auto& cd : args.callData) {
+        if (cd.exerciseDate <= today)
+            continue;
+        if (cd.noticeDate != Date() && cd.noticeDate <= today)
+            continue; // the decision date has passed
+        QL_REQUIRE(cd.exerciseType == CallableBond::CallabilityData::ExerciseType::OnThisDate,
+                   "fmmMapCallableBond: American (FromThisDateOn) calls are not supported");
+        bool onCouponDate = false;
+        for (const auto& c : couponDates)
+            if (std::abs(static_cast<Integer>(c.first - cd.exerciseDate)) <= static_cast<Integer>(toleranceDays))
+                onCouponDate = true;
+        QL_REQUIRE(onCouponDate, "fmmMapCallableBond: call date "
+                                     << cd.exerciseDate
+                                     << " is not a coupon pay date; accrued-interest handling for mid-period "
+                                        "calls is not supported in this release");
+        const Size idx = grid.index(cd.exerciseDate, toleranceDays, "call date");
+        if (idx >= inst.lastFlowIdx)
+            continue;
+        // decision at the notice date (ORE CallData NoticePeriod) and settlement on the call date;
+        // the notice date must be a grid date (FmmGrid notice offsets, builder parameter NoticePeriod)
+        Size noticeIdx = idx;
+        if (cd.noticeDate != Date() && cd.noticeDate < cd.exerciseDate)
+            noticeIdx = std::min(idx, grid.index(cd.noticeDate, toleranceDays, "call notice date"));
+        noticeDates.push_back(cd.noticeDate != Date() ? cd.noticeDate : cd.exerciseDate);
+        // clean = dirty on a coupon date (zero accrual); price is per unit notional
+        const Real fee = -cd.price * notionalAfter(cd.exerciseDate);
+        inst.rights.push_back({noticeIdx, idx, fee});
+    }
+    std::vector<FmmCallableInstrument::Right> rights;
+    for (const auto& r : inst.rights)
+        if (rights.empty() || r.noticeIdx > rights.back().noticeIdx)
+            rights.push_back(r);
+    inst.rights = rights;
+    return inst;
+}
+
 void FmmLsmCallableBondEngine::calculate() const {
     const auto& p = *model_->parametrization();
     const Date today = grid_->referenceDate();
@@ -58,65 +125,9 @@ void FmmLsmCallableBondEngine::calculate() const {
         QL_REQUIRE(referenceCurve_->referenceDate() == today, "FmmLsmCallableBondEngine: reference curve date mismatch");
     const Real spread = discountingSpread_.empty() ? 0.0 : discountingSpread_->value();
 
-    // issuer's view: every bond cash flow is paid (negative), calls are cancellation rights
-    FmmCallableInstrument inst;
-    inst.style = FmmCallableInstrument::Style::Cancel;
-    inst.issuerSpread = spread;
-    FmmLegMapper mapper(*grid_, config_.gridToleranceDays, today);
-    mapper.addLeg(arguments_.cashflows, -1.0, inst, "bond cash flows");
-    QL_REQUIRE(inst.lastFlowIdx >= 1, "FmmLsmCallableBondEngine: no future cash flows");
-
-    // outstanding notional at a call date: the nominal of the coupon accruing after it (or the
-    // last known notional); calls must fall on coupon pay dates, where the accrual is zero
-    std::vector<std::pair<Date, Real>> couponDates; // pay date, nominal of that coupon
-    for (const auto& cf : arguments_.cashflows)
-        if (auto c = QuantLib::ext::dynamic_pointer_cast<Coupon>(cf))
-            couponDates.emplace_back(c->date(), c->nominal());
-    auto notionalAfter = [&](const Date& d) {
-        Real n = arguments_.notionals.empty() ? Null<Real>() : arguments_.notionals.front();
-        for (const auto& cf : arguments_.cashflows)
-            if (auto c = QuantLib::ext::dynamic_pointer_cast<Coupon>(cf))
-                if (c->accrualStartDate() >= d) {
-                    n = c->nominal();
-                    break;
-                }
-        QL_REQUIRE(n != Null<Real>(), "FmmLsmCallableBondEngine: cannot determine the notional outstanding at " << d);
-        return n;
-    };
     std::vector<Date> noticeDates;
-    for (const auto& cd : arguments_.callData) {
-        if (cd.exerciseDate <= today)
-            continue;
-        if (cd.noticeDate != Date() && cd.noticeDate <= today)
-            continue; // the decision date has passed
-        QL_REQUIRE(cd.exerciseType == CallableBond::CallabilityData::ExerciseType::OnThisDate,
-                   "FmmLsmCallableBondEngine: American (FromThisDateOn) calls are not supported");
-        bool onCouponDate = false;
-        for (const auto& c : couponDates)
-            if (std::abs(static_cast<Integer>(c.first - cd.exerciseDate)) <= static_cast<Integer>(config_.gridToleranceDays))
-                onCouponDate = true;
-        QL_REQUIRE(onCouponDate, "FmmLsmCallableBondEngine: call date "
-                                     << cd.exerciseDate
-                                     << " is not a coupon pay date; accrued-interest handling for mid-period "
-                                        "calls is not supported in this release");
-        const Size idx = grid_->index(cd.exerciseDate, config_.gridToleranceDays, "call date");
-        if (idx >= inst.lastFlowIdx)
-            continue;
-        // decision at the notice date (ORE CallData NoticePeriod) and settlement on the call date;
-        // the notice date must be a grid date (FmmGrid notice offsets, builder parameter NoticePeriod)
-        Size noticeIdx = idx;
-        if (cd.noticeDate != Date() && cd.noticeDate < cd.exerciseDate)
-            noticeIdx = std::min(idx, grid_->index(cd.noticeDate, config_.gridToleranceDays, "call notice date"));
-        noticeDates.push_back(cd.noticeDate != Date() ? cd.noticeDate : cd.exerciseDate);
-        // clean = dirty on a coupon date (zero accrual); price is per unit notional
-        const Real fee = -cd.price * notionalAfter(cd.exerciseDate);
-        inst.rights.push_back({noticeIdx, idx, fee});
-    }
-    std::vector<FmmCallableInstrument::Right> rights;
-    for (const auto& r : inst.rights)
-        if (rights.empty() || r.noticeIdx > rights.back().noticeIdx)
-            rights.push_back(r);
-    inst.rights = rights;
+    FmmCallableInstrument inst =
+        fmmMapCallableBond(arguments_, *grid_, config_.gridToleranceDays, today, spread, noticeDates);
 
     const Real issuerStraight = FmmLegMapper::underlyingCurveValue(inst, p); // negative
     Real issuerValue = issuerStraight;

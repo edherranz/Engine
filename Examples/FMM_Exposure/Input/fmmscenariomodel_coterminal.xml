@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<!-- A7 scenario model of the netting set, basket (a): the Bermudan's coterminal deal-strike
+     swaptions (expiries 1Y-5Y into 2031-02-12 at 4%) bootstrapped jointly with the ATM SOFR
+     optionlets (the A5 pricing calibration of the Bermudan, applied to the whole netting set). -->
+<FMM key="USD-SOFR">
+  <CalibrationType>Bootstrap</CalibrationType>
+  <Grid>3M</Grid>
+  <GridToleranceDays>5</GridToleranceDays>
+  <Shift>1/tau</Shift>
+  <VolatilityType>DisplacedDiffusion</VolatilityType>
+  <RhoInf>0.6</RhoInf>
+  <Beta>0.08</Beta>
+  <Factors>3</Factors>
+  <ApproximationMethod>EffectiveShift</ApproximationMethod>
+  <CapFloorBasket>ATM</CapFloorBasket>
+  <JointMaxIterations>100</JointMaxIterations>
+  <JointToleranceBp>0.1</JointToleranceBp>
+  <Volatility>
+    <Calibrate>Y</Calibrate>
+    <ParamType>Piecewise</ParamType>
+    <InitialValue>0.0025</InitialValue>
+  </Volatility>
+  <CalibrationSwaptions>
+    <Expiries>1Y,2Y,3Y,4Y,5Y</Expiries>
+    <Terms>2031-02-12,2031-02-12,2031-02-12,2031-02-12,2031-02-12</Terms>
+    <Strikes>0.04,0.04,0.04,0.04,0.04</Strikes>
+  </CalibrationSwaptions>
+</FMM>

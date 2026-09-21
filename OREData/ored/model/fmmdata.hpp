@@ -96,6 +96,11 @@ public:
     Period& capFloorHorizon() { return capFloorHorizon_; }
     Size& jointMaxIterations() { return jointMaxIterations_; }
     Real& jointToleranceBp() { return jointToleranceBp_; }
+    //! CalibrationType BestFit only: fit the a(t) segments (one per distinct swaption expiry) by
+    //! least squares to the whole swaption basket, e.g. an expiry x term grid, jointly with the
+    //! cap/floor basket when one is configured (A7 scenario model). Default false = the common
+    //! level fit (mean residual zero across the basket, a(t) as given).
+    bool& bestFitTimeDependence() { return bestFitTimeDependence_; }
     //! contractual dates the model grid must contain (set by engine builders from the trade;
     //! not part of the XML). Empty: the grid is built from the calibration basket dates.
     std::vector<Date>& gridDates() { return gridDates_; }
@@ -125,6 +130,7 @@ private:
     Period capFloorHorizon_;
     Size jointMaxIterations_;
     Real jointToleranceBp_;
+    bool bestFitTimeDependence_ = false;
     std::vector<Date> gridDates_;
     mutable std::vector<std::string> optionExpiries_, optionTerms_, optionStrikes_;
 };

@@ -688,6 +688,63 @@ BOOST_AUTO_TEST_CASE(testFmmJointCapFloorSwaptionCalibration) {
     BOOST_CHECK_THROW(bad.validate(), QuantLib::Error);
 }
 
+BOOST_AUTO_TEST_CASE(testFmmGridBestFitCalibration) {
+    BOOST_TEST_MESSAGE("Testing the joint best fit of the a(t) segments to an expiry x term swaption grid with the "
+                       "ATM optionlet basket (A7 scenario model, FmmData BestFitTimeDependence)...");
+    Settings::instance().evaluationDate() = kAsof;
+    auto market = QuantLib::ext::make_shared<FmmTestMarket>(kAsof, 0.03, 0.0080);
+    XMLDocument doc;
+    doc.fromXMLString("<FMM key=\"USD-SOFR\"><CalibrationType>BestFit</CalibrationType>"
+                      "<BestFitTimeDependence>true</BestFitTimeDependence><CapFloorBasket>ATM</CapFloorBasket>"
+                      "<Factors>1</Factors><RhoInf>1.0</RhoInf><Beta>0.0</Beta><Grid>3M</Grid><JointMaxIterations>100</JointMaxIterations>"
+                      "<Volatility><InitialValue>0.0025</InitialValue></Volatility>"
+                      "<CalibrationSwaptions><Expiries>1Y,1Y,1Y,2Y,2Y,2Y,3Y,3Y,3Y</Expiries>"
+                      "<Terms>1Y,2Y,3Y,1Y,2Y,3Y,1Y,2Y,3Y</Terms></CalibrationSwaptions></FMM>");
+    auto data = QuantLib::ext::make_shared<FmmData>();
+    data->fromXML(doc.getFirstNode("FMM"));
+    BOOST_CHECK(data->bestFitTimeDependence());
+    XMLDocument out;
+    FmmData again;
+    again.fromXML(data->toXML(out));
+    BOOST_CHECK(again.bestFitTimeDependence());
+    auto builder = QuantLib::ext::make_shared<FmmBuilder>(market, data, Market::defaultConfiguration, 0.001, false, "",
+                                                          true, "gridBestFit");
+    auto model = builder->modelAsFmm();
+    BOOST_REQUIRE(model);
+    const auto& info = builder->calibrationInfo();
+    BOOST_REQUIRE_EQUAL(info.modelVols.size(), Size(9));
+    Real ss = 0.0, worstSwp = 0.0;
+    for (Size i = 0; i < info.modelVols.size(); ++i) {
+        const Real e = (info.modelVols[i] - info.marketVols[i]) * 1e4;
+        ss += e * e;
+        worstSwp = std::max(worstSwp, std::fabs(e));
+    }
+    const Real rms = std::sqrt(ss / 9.0);
+    BOOST_TEST_MESSAGE("grid best fit: joint iterations " << info.jointIterations << ", converged " << info.jointConverged
+                                                          << ", stationary " << info.jointStationary << ", swaption rms "
+                                                          << rms << " bp, worst " << worstSwp << " bp, caplet worst "
+                                                          << info.capletMaxResidualBp << " bp, segments "
+                                                          << model->parametrization()->parameterTimes(0).size() + 1
+                                                          << ", last parameter change " << info.jointLastParameterChange);
+    BOOST_CHECK_EQUAL(model->parametrization()->parameterTimes(0).size(), Size(2)); // 3 distinct expiries -> 3 segments
+    BOOST_CHECK(info.jointIterations >= 2);
+    BOOST_CHECK(info.jointConverged || info.jointStationary);
+    BOOST_CHECK(rms < 1.0);
+    BOOST_CHECK(info.capletMaxResidualBp > 0.0 && info.capletMaxResidualBp < 3.0);
+    // swaption-only best fit of the time dependence (no cap/floor basket): the grid alone
+    auto data2 = QuantLib::ext::make_shared<FmmData>(*data);
+    data2->capFloorBasket() = "None";
+    auto builder2 = QuantLib::ext::make_shared<FmmBuilder>(market, data2, Market::defaultConfiguration, 0.001, false,
+                                                           "", true, "gridBestFitSwaptionsOnly");
+    builder2->modelAsFmm();
+    const auto& info2 = builder2->calibrationInfo();
+    Real worst2 = 0.0;
+    for (Size i = 0; i < info2.modelVols.size(); ++i)
+        worst2 = std::max(worst2, std::fabs(info2.modelVols[i] - info2.marketVols[i]) * 1e4);
+    BOOST_TEST_MESSAGE("swaption-only grid best fit: worst residual " << worst2 << " bp");
+    BOOST_CHECK(worst2 < 1.0);
+}
+
 BOOST_AUTO_TEST_CASE(testFmmPolicyModes) {
     BOOST_TEST_MESSAGE("Testing the exercise-policy treatment across revaluations (A6): retrained policy vs the "
                        "policy of the first valuation kept frozen, under a vol bump with recalibration...");

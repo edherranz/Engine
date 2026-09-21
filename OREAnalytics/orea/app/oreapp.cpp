@@ -1303,6 +1303,10 @@ void OREAppInputParameters::loadParameters() {
     if (!tmp.empty() && parseBool(tmp))
         insertAnalytic("XVA");
 
+    tmp = params_->getString("fmmExposure", "active", false);
+    if (!tmp.empty() && parseBool(tmp))
+        insertAnalytic("FMM_EXPOSURE");
+
     tmp = params_->getString("pfe", "active", false);
     if (!tmp.empty() && parseBool(tmp))
         insertAnalytic("PFE");

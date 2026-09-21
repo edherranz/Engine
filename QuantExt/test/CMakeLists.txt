@@ -62,6 +62,7 @@ exactbachelierimpliedvolatility.cpp
 fddefaultableequityjumppdiffusionconvertiblebondengine.cpp
 fillemptymatrix.cpp
 fmm.cpp
+fmmexposure.cpp
 formulabasedcoupon.cpp
 forwardbond.cpp
 fxvolsmile.cpp

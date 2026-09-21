@@ -36,6 +36,7 @@
 #include <orea/app/analytics/stresstestanalytic.hpp>
 #include <orea/app/analytics/varanalytic.hpp>
 #include <orea/app/analytics/xvaanalytic.hpp>
+#include <orea/app/analytics/fmmexposureanalytic.hpp>
 #include <orea/app/analytics/xvaexplainanalytic.hpp>
 #include <orea/app/analytics/xvasensitivityanalytic.hpp>
 #include <orea/app/analytics/xvastressanalytic.hpp>
@@ -79,6 +80,7 @@ void initBuilders(const bool registerOREAnalytics) {
         ORE_REGISTER_ANALYTIC_BUILDER("SCENARIO_GENERATION", {}, ScenarioGenerationAnalytic, false);
         ORE_REGISTER_ANALYTIC_BUILDER("SIMM", {}, SimmAnalytic, false);
         ORE_REGISTER_ANALYTIC_BUILDER("XVA", xvaAnalyticSubAnalytics, XvaAnalytic, false);
+        ORE_REGISTER_ANALYTIC_BUILDER("FMM_EXPOSURE", {}, FmmExposureAnalytic, false);
         ORE_REGISTER_ANALYTIC_BUILDER("STRESS", {}, StressTestAnalytic, false);
         ORE_REGISTER_ANALYTIC_BUILDER("SIMM_STRESS", {}, StressedSimmAnalytic, false);
         ORE_REGISTER_ANALYTIC_BUILDER("PAR_SCENARIO", {}, ParScenarioAnalytic, false);

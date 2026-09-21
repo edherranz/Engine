@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<!-- A7 scenario model of the netting set, default basket (owner decision (b)): ATM swaption grid to
+     the netting set's horizon (expiries 1Y-5Y, terms to 6Y) fitted by least squares in the a(t)
+     segments (one per expiry) jointly with the ATM SOFR optionlets, which pin the rate levels; three
+     factors, rhoInf 0.6, beta 0.08. -->
+<FMM key="USD-SOFR">
+  <CalibrationType>BestFit</CalibrationType>
+  <BestFitTimeDependence>true</BestFitTimeDependence>
+  <Grid>3M</Grid>
+  <GridToleranceDays>5</GridToleranceDays>
+  <Shift>1/tau</Shift>
+  <VolatilityType>DisplacedDiffusion</VolatilityType>
+  <RhoInf>0.6</RhoInf>
+  <Beta>0.08</Beta>
+  <Factors>3</Factors>
+  <ApproximationMethod>EffectiveShift</ApproximationMethod>
+  <CapFloorBasket>ATM</CapFloorBasket>
+  <JointMaxIterations>100</JointMaxIterations>
+  <JointToleranceBp>0.1</JointToleranceBp>
+  <Volatility>
+    <Calibrate>Y</Calibrate>
+    <ParamType>Piecewise</ParamType>
+    <InitialValue>0.0025</InitialValue>
+  </Volatility>
+  <CalibrationSwaptions>
+    <Expiries>1Y,1Y,1Y,1Y,1Y,2Y,2Y,2Y,2Y,3Y,3Y,3Y,4Y,4Y,5Y</Expiries>
+    <Terms>1Y,2Y,3Y,4Y,5Y,1Y,2Y,3Y,4Y,1Y,2Y,3Y,1Y,2Y,1Y</Terms>
+    <Strikes/>
+  </CalibrationSwaptions>
+</FMM>

@@ -329,6 +329,7 @@
 #include <qle/models/extendedconstantlosslatentmodel.hpp>
 #include <qle/models/fmmanalytics.hpp>
 #include <qle/models/fmmcalibration.hpp>
+#include <qle/models/fmmexposure.hpp>
 #include <qle/models/fmmgrid.hpp>
 #include <qle/models/fmmirmodel.hpp>
 #include <qle/models/fmmlsmpricer.hpp>

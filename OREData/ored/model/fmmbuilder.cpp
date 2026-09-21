@@ -229,6 +229,18 @@ void FmmBuilder::initParametrization() const {
             volTimes = Array(swaptionExpiries_.begin(), std::next(swaptionExpiries_.end(), -1));
             levels.assign(volTimes.size() + 1, data->volValues().front());
         }
+    } else if (data->calibrateVolatility() && data->calibrationType() == CalibrationType::BestFit &&
+               data->bestFitTimeDependence()) {
+        // joint / grid best fit: one a(t) segment per distinct swaption expiry (all but the last), the
+        // duplicates of an expiry x term grid collapsed; a single expiry means a constant a(t)
+        QL_REQUIRE(!swaptionExpiries_.empty(), "FmmBuilder: BestFitTimeDependence needs calibration swaptions.");
+        std::vector<Time> distinct(swaptionExpiries_.begin(), swaptionExpiries_.end());
+        std::sort(distinct.begin(), distinct.end());
+        distinct.erase(std::unique(distinct.begin(), distinct.end(),
+                                   [](const Time a, const Time b) { return std::fabs(a - b) < 1.0 / 365.0; }),
+                       distinct.end());
+        volTimes = distinct.size() <= 1 ? Array() : Array(distinct.begin(), std::next(distinct.end(), -1));
+        levels.assign(volTimes.size() + 1, data->volValues().front());
     } else if (data->volParamType() == ParamType::Constant) {
         volTimes = Array();
         levels = {data->volValues().front()};
@@ -362,15 +374,19 @@ void FmmBuilder::calibrate() const {
                                << v.a.size() << " segments for " << targets.size() << " active swaptions");
                 fmmSwaptionTimeDependenceBootstrap(p, v, targets, method);
             }
+        } else if (data->calibrationType() == CalibrationType::BestFit && data->bestFitTimeDependence()) {
+            // least-squares fit of the a(t) segments to the whole swaption basket (any expiry x term
+            // set), jointly with the caplet levels when a cap/floor basket is configured
+            QL_REQUIRE(!targets.empty(), "FmmBuilder: BestFitTimeDependence needs active calibration swaptions");
             if (!caplets.empty()) {
-                Real worst = 0.0;
-                for (const auto& c : caplets) {
-                    const Real modelVol = fmmCapletNormalVol(p, c.bucket, info_.capletStrikes[info_.capletModelVols.size()],
-                                                             c.backwardLooking);
-                    info_.capletModelVols.push_back(modelVol);
-                    worst = std::max(worst, std::fabs(modelVol - c.normalVol) * 1e4);
-                }
-                info_.capletMaxResidualBp = worst;
+                const auto rep = fmmJointBestFit(p, v, caplets, targets, data->jointMaxIterations(),
+                                                 data->jointToleranceBp(), method);
+                info_.jointIterations = rep.iterations;
+                info_.jointConverged = rep.converged;
+                info_.jointStationary = rep.stationary;
+                info_.jointLastParameterChange = rep.lastParameterChange;
+            } else {
+                fmmSwaptionTimeDependenceBestFit(p, v, targets, method);
             }
         } else if (data->calibrationType() == CalibrationType::BestFit) {
             // one common level, mean vol residual zero across the basket
@@ -390,6 +406,16 @@ void FmmBuilder::calibrate() const {
             v.apply(p);
         } else {
             QL_FAIL("FmmBuilder: unsupported calibration type " << data->calibrationType());
+        }
+        if (!caplets.empty()) {
+            Real worst = 0.0;
+            for (const auto& c : caplets) {
+                const Real modelVol =
+                    fmmCapletNormalVol(p, c.bucket, info_.capletStrikes[info_.capletModelVols.size()], c.backwardLooking);
+                info_.capletModelVols.push_back(modelVol);
+                worst = std::max(worst, std::fabs(modelVol - c.normalVol) * 1e4);
+            }
+            info_.capletMaxResidualBp = worst;
         }
         if (data->mcCorrection().enabled) {
             const auto& mc = data->mcCorrection();

@@ -32,6 +32,7 @@
 #include <orea/app/analytics/calibrationanalytic.hpp>
 #include <orea/app/analytics/correlationanalytic.hpp>
 #include <orea/app/analytics/crifanalytic.hpp>
+#include <orea/app/analytics/fmmexposureanalytic.hpp>
 #include <orea/app/analytics/imscheduleanalytic.hpp>
 #include <orea/app/analytics/parconversionanalytic.hpp>
 #include <orea/app/analytics/parscenarioanalytic.hpp>

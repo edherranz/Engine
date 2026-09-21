@@ -102,6 +102,26 @@ FmmCalibrationReport fmmJointBootstrap(FmmParametrization& p, FmmSeparableVols& 
                                        const Size maxIterations = 10, const Real tolBp = 1e-3,
                                        const FmmSwaptionApproxMethod method = FmmSwaptionApproxMethod::StrikeFlatNormal);
 
+//! strategy (d): least-squares fit of the a(t) segments to an arbitrary swaption basket (an
+//! expiry x term grid, several terms per expiry, ...), holding the levels fixed: Levenberg-
+//! Marquardt on log a_k with residuals in basis points of normal vol at each target's own strike;
+//! normalized to a(0) = 1 on exit (the levels absorb the scale, the model is invariant). Segments
+//! no target depends on keep their values. Returns the root-mean-square residual in bp.
+Real fmmSwaptionTimeDependenceBestFit(FmmParametrization& p, FmmSeparableVols& v,
+                                      const std::vector<FmmSwaptionVolTarget>& targets,
+                                      const FmmSwaptionApproxMethod method);
+
+//! strategy (c'): the joint alternation of (c) with the least-squares fit (d) in place of the
+//! sequential bootstrap: the caplets fix the levels, the swaption basket (any expiry x term set)
+//! fixes the time dependence in the least-squares sense; same stopping rules (all targets within
+//! tolBp, or stationary parameters) and the same report as (c). With a grid basket the residual
+//! criterion is normally not met and the fixed point is the calibrated state.
+FmmCalibrationReport fmmJointBestFit(FmmParametrization& p, FmmSeparableVols& v,
+                                     const std::vector<FmmCapletVolTarget>& capletTargets,
+                                     const std::vector<FmmSwaptionVolTarget>& swaptionTargets,
+                                     const Size maxIterations, const Real tolBp,
+                                     const FmmSwaptionApproxMethod method);
+
 //! MC-corrected strategy (b): the analytic bootstrap is iterated against targets shifted by the
 //! Monte Carlo-measured approximation bias (adjusted_k <- adjusted_k - (mcVol_k - marketVol_k))
 //! until the same-model MC reprices every market target within tolBp or maxIterations is hit.

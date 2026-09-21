@@ -354,3 +354,5 @@ Examples/**/pricingstats.csv
 
 .gitmodules
 
+
+Examples/FMM_*/Output/

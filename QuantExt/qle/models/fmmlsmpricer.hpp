@@ -65,7 +65,8 @@ struct FmmCallableInstrument {
         Real feeFlow = 0.0; //!< signed flow at T_settle when exercised (owner's perspective)
     };
     std::vector<Right> rights; //!< ascending notice indices
-    void validate(const Size M) const;
+    //! consistency checks; requireRights = false admits a vanilla structure (no rights)
+    void validate(const Size M, const bool requireRights = true) const;
 };
 
 //! t = 0 curve value of an instrument's flows (fixed, grid floats, compounded floats), with the
@@ -170,7 +171,9 @@ public:
     //! flows between notice and settlement and the fee marked on the notice-date curve.
     FmmDualBoundResult dualBound(const Size outerPaths, const Size innerPaths, const BigNatural seed) const;
 
-private:
+    //! Flow, marking and regressor helpers (pure functions of the instrument and the model
+    //! state; public for the exposure engine, which reuses the pricer's conventions)
+    //@{
     //! deterministic issuer-spread discount factor anchored at time 0
     Real spreadDf(const Time T) const { return std::exp(-instrument_.issuerSpread * T); }
     //! realized flow paid at T_j given the state at T_j (rates R_k, k <= j, are fixed)
@@ -186,6 +189,11 @@ private:
     Array regressorsAt(const ForwardMarketModel::State& state, const Size r, const Real bank) const;
     //! policy decision at right r for the given regressors
     bool exerciseDecision(const Array& x, const Size r, const FmmLsmPolicy& pol) const;
+    //! basis functions of the three regressors (order 1: linear, order 2: full quadratic)
+    Array basis(const Array& x) const;
+    //@}
+
+private:
     //! realized time-0-deflated policy value continuing from right `fromRight` along a fresh
     //! inner path started at `state` (grid index = notice of fromRight - 1 ... see .cpp),
     //! `pastFlows` = deflated flows already realized before the start index
@@ -201,7 +209,6 @@ private:
     };
     void simulate(const Size paths, const BigNatural seed, const SequenceType seq,
                   std::vector<PathData>& out) const;
-    Array basis(const Array& x) const;
     //! first right at which `pol` exercises along the path, -1 if never
     Integer decideRight(const PathData& p, const FmmLsmPolicy& pol) const;
     //! pathwise deflated value when exercising at right `exercisedRight` (-1 = never)

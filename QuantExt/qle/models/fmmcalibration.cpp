@@ -21,6 +21,11 @@
 
 #include <ql/math/comparison.hpp>
 #include <ql/math/solvers1d/brent.hpp>
+#include <ql/math/optimization/constraint.hpp>
+#include <ql/math/optimization/costfunction.hpp>
+#include <ql/math/optimization/endcriteria.hpp>
+#include <ql/math/optimization/levenbergmarquardt.hpp>
+#include <ql/math/optimization/problem.hpp>
 
 #include <chrono>
 #include <sstream>
@@ -144,11 +149,68 @@ void fmmSwaptionTimeDependenceBootstrap(FmmParametrization& p, FmmSeparableVols&
     v.apply(p);
 }
 
-FmmCalibrationReport fmmJointBootstrap(FmmParametrization& p, FmmSeparableVols& v,
-                                       const std::vector<FmmCapletVolTarget>& capletTargets,
-                                       const std::vector<FmmSwaptionVolTarget>& swaptionTargets,
-                                       const Size maxIterations, const Real tolBp,
-                                       const FmmSwaptionApproxMethod method) {
+namespace {
+//! least-squares residuals (bp of normal vol) of the swaption basket in the a(t) segments (log scale)
+class TimeDependenceCost : public CostFunction {
+public:
+    TimeDependenceCost(FmmParametrization& p, FmmSeparableVols& v, const std::vector<FmmSwaptionVolTarget>& targets,
+                       const FmmSwaptionApproxMethod method)
+        : p_(p), v_(v), targets_(targets), method_(method) {}
+    Array values(const Array& x) const override {
+        for (Size k = 0; k < v_.a.size(); ++k)
+            v_.a[k] = std::exp(x[k]);
+        v_.apply(p_);
+        Array r(targets_.size());
+        for (Size i = 0; i < targets_.size(); ++i)
+            r[i] = (modelSwaptionVol(p_, targets_[i], method_) - targets_[i].normalVol) * 1e4;
+        return r;
+    }
+    Real value(const Array& x) const override {
+        const Array r = values(x);
+        return std::sqrt(DotProduct(r, r) / static_cast<Real>(std::max<Size>(r.size(), 1)));
+    }
+
+private:
+    FmmParametrization& p_;
+    FmmSeparableVols& v_;
+    const std::vector<FmmSwaptionVolTarget>& targets_;
+    FmmSwaptionApproxMethod method_;
+};
+} // namespace
+
+Real fmmSwaptionTimeDependenceBestFit(FmmParametrization& p, FmmSeparableVols& v,
+                                      const std::vector<FmmSwaptionVolTarget>& targets,
+                                      const FmmSwaptionApproxMethod method) {
+    QL_REQUIRE(!targets.empty(), "fmmSwaptionTimeDependenceBestFit: no targets");
+    QL_REQUIRE(v.a.size() == v.segmentTimes.size() + 1, "fmmSwaptionTimeDependenceBestFit: a / segmentTimes mismatch");
+    Array x(v.a.size());
+    for (Size k = 0; k < v.a.size(); ++k)
+        x[k] = std::log(std::max(v.a[k], 1e-6));
+    TimeDependenceCost cost(p, v, targets, method);
+    NoConstraint constraint;
+    Problem problem(cost, constraint, x);
+    LevenbergMarquardt lm(1e-10, 1e-10, 1e-10);
+    EndCriteria endCriteria(1000, 100, 1e-12, 1e-12, 1e-12);
+    lm.minimize(problem, endCriteria);
+    const Array& xs = problem.currentValue();
+    for (Size k = 0; k < v.a.size(); ++k)
+        v.a[k] = std::exp(xs[k]);
+    v.normalize();
+    v.apply(p);
+    Real ss = 0.0;
+    for (const auto& t : targets) {
+        const Real r = (modelSwaptionVol(p, t, method) - t.normalVol) * 1e4;
+        ss += r * r;
+    }
+    return std::sqrt(ss / static_cast<Real>(targets.size()));
+}
+
+namespace {
+FmmCalibrationReport jointAlternation(FmmParametrization& p, FmmSeparableVols& v,
+                                      const std::vector<FmmCapletVolTarget>& capletTargets,
+                                      const std::vector<FmmSwaptionVolTarget>& swaptionTargets,
+                                      const Size maxIterations, const Real tolBp, const FmmSwaptionApproxMethod method,
+                                      const bool bestFit) {
     const auto start = std::chrono::steady_clock::now();
     FmmCalibrationReport report;
     // the alternation (caplet levels, then swaption time dependence) is iterated until either all
@@ -160,7 +222,10 @@ FmmCalibrationReport fmmJointBootstrap(FmmParametrization& p, FmmSeparableVols& 
         report.iterations = it + 1;
         const std::vector<Real> prevLevels = v.levels, prevA = v.a;
         fmmCapletLevelBootstrap(p, v, capletTargets);
-        fmmSwaptionTimeDependenceBootstrap(p, v, swaptionTargets, method);
+        if (bestFit)
+            fmmSwaptionTimeDependenceBestFit(p, v, swaptionTargets, method);
+        else
+            fmmSwaptionTimeDependenceBootstrap(p, v, swaptionTargets, method);
         Real change = 0.0;
         for (Size j = 0; j < v.levels.size(); ++j)
             change = std::max(change, std::fabs(v.levels[j] - prevLevels[j]) / std::max(std::fabs(prevLevels[j]), 1e-12));
@@ -179,7 +244,11 @@ FmmCalibrationReport fmmJointBootstrap(FmmParametrization& p, FmmSeparableVols& 
             report.converged = true;
             break;
         }
-        if (it > 0 && change < 1e-9) {
+        // stationarity: the exact bootstrap solves converge to machine precision (1e-9), the
+        // least-squares step has a noise floor of about 1e-8 in the parameters from its
+        // finite-difference Jacobian, so its fixed point is declared at 1e-7 (the residuals are
+        // unchanged to 1e-6 bp at that level)
+        if (it > 0 && change < (bestFit ? 1e-7 : 1e-9)) {
             report.stationary = true;
             break;
         }
@@ -206,6 +275,23 @@ FmmCalibrationReport fmmJointBootstrap(FmmParametrization& p, FmmSeparableVols& 
         std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count() *
         1e-6;
     return report;
+}
+} // namespace
+
+FmmCalibrationReport fmmJointBootstrap(FmmParametrization& p, FmmSeparableVols& v,
+                                       const std::vector<FmmCapletVolTarget>& capletTargets,
+                                       const std::vector<FmmSwaptionVolTarget>& swaptionTargets,
+                                       const Size maxIterations, const Real tolBp,
+                                       const FmmSwaptionApproxMethod method) {
+    return jointAlternation(p, v, capletTargets, swaptionTargets, maxIterations, tolBp, method, false);
+}
+
+FmmCalibrationReport fmmJointBestFit(FmmParametrization& p, FmmSeparableVols& v,
+                                     const std::vector<FmmCapletVolTarget>& capletTargets,
+                                     const std::vector<FmmSwaptionVolTarget>& swaptionTargets,
+                                     const Size maxIterations, const Real tolBp,
+                                     const FmmSwaptionApproxMethod method) {
+    return jointAlternation(p, v, capletTargets, swaptionTargets, maxIterations, tolBp, method, true);
 }
 
 FmmMcCorrectedReport fmmMcCorrectedSwaptionBootstrap(FmmParametrization& p,
