@@ -1,0 +1,41 @@
+<?xml version="1.0"?>
+<!-- Stock ORE valuation of the cancellable cross-currency swap template (CrossAssetModel MC for the
+     cancellation right, see pricingengine_cam_v400k6.xml). Market: Products 2025-02-10 plus the template's
+     synthetic correlations. -->
+<ORE>
+  <Setup>
+    <Parameter name="asofDate">2025-02-10</Parameter>
+    <Parameter name="inputPath">Input</Parameter>
+    <Parameter name="outputPath">Output/cam_reduced_v400k6</Parameter>
+    <Parameter name="logFile">log.txt</Parameter>
+    <Parameter name="logMask">15</Parameter>
+    <Parameter name="marketDataFile">../../Products/Input/marketdata.csv,marketdata_xccy.csv</Parameter>
+    <Parameter name="fixingDataFile">../../Products/Input/fixings.csv</Parameter>
+    <Parameter name="implyTodaysFixings">N</Parameter>
+    <Parameter name="curveConfigFile">../../Products/Input/curveconfig.xml,curveconfig_xccy.xml</Parameter>
+    <Parameter name="conventionsFile">../../Products/Input/conventions.xml</Parameter>
+    <Parameter name="marketConfigFile">todaysmarket.xml</Parameter>
+    <Parameter name="pricingEnginesFile">pricingengine_cam_v400k6.xml</Parameter>
+    <Parameter name="portfolioFile">portfolio_reduced.xml</Parameter>
+    <Parameter name="observationModel">None</Parameter>
+    <Parameter name="continueOnError">false</Parameter>
+  </Setup>
+  <Markets>
+    <Parameter name="lgmcalibration">default</Parameter>
+    <Parameter name="fxcalibration">default</Parameter>
+    <Parameter name="pricing">default</Parameter>
+    <Parameter name="simulation">default</Parameter>
+  </Markets>
+  <Analytics>
+    <Analytic type="npv">
+      <Parameter name="active">Y</Parameter>
+      <Parameter name="baseCurrency">USD</Parameter>
+      <Parameter name="outputFileName">npv.csv</Parameter>
+      <Parameter name="additionalResults">Y</Parameter>
+    </Analytic>
+    <Analytic type="cashflow">
+      <Parameter name="active">Y</Parameter>
+      <Parameter name="outputFileName">flows.csv</Parameter>
+    </Analytic>
+  </Analytics>
+</ORE>

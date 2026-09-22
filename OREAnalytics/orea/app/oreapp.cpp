@@ -1298,14 +1298,16 @@ void OREAppInputParameters::loadParameters() {
         insertAnalytic("EXPOSURE");
     }    
 
+    // the FMM exposure analytic runs before XVA: in a single run its cube and scenario data are
+    // handed to the XVA analytic in memory (InputParameters::setParameterObject)
+    tmp = params_->getString("fmmExposure", "active", false);
+    if (!tmp.empty() && parseBool(tmp))
+        insertAnalytic("FMM_EXPOSURE");
+
     // check this here because we need to know further below when checking for EXPOSURE or XVA analytic
     tmp = params_->getString("xva", "active", false);
     if (!tmp.empty() && parseBool(tmp))
         insertAnalytic("XVA");
-
-    tmp = params_->getString("fmmExposure", "active", false);
-    if (!tmp.empty() && parseBool(tmp))
-        insertAnalytic("FMM_EXPOSURE");
 
     tmp = params_->getString("pfe", "active", false);
     if (!tmp.empty() && parseBool(tmp))

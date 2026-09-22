@@ -1,0 +1,83 @@
+<?xml version="1.0"?>
+<!-- Two-currency market for the cancellable cross-currency swap template on the Products 2025-02-10
+     data set: USD discounted and projected on SOFR, EUR discounted on ESTR with the EURIBOR
+     forwarding curves behind the EUR swaption surface (the EUR swap index family EUR-CMS-* is
+     EURIBOR based), the EUR/USD spot and volatility surface, and three synthetic rate/FX
+     correlations (curve configuration curveconfig_xccy.xml, quotes marketdata_xccy.csv). -->
+<TodaysMarket>
+  <Configuration id="default">
+    <DiscountingCurvesId>default</DiscountingCurvesId>
+    <IndexForwardingCurvesId>default</IndexForwardingCurvesId>
+    <SwapIndexCurvesId>default</SwapIndexCurvesId>
+    <SwaptionVolatilitiesId>default</SwaptionVolatilitiesId>
+    <CapFloorVolatilitiesId>default</CapFloorVolatilitiesId>
+    <FxSpotsId>default</FxSpotsId>
+    <FxVolatilitiesId>default</FxVolatilitiesId>
+    <CorrelationsId>default</CorrelationsId>
+    <YieldCurvesId>default</YieldCurvesId>
+  </Configuration>
+  <!-- the cross-currency swap engine asks for the in-currency discounting configuration: same curves -->
+  <Configuration id="inccy">
+    <DiscountingCurvesId>default</DiscountingCurvesId>
+    <IndexForwardingCurvesId>default</IndexForwardingCurvesId>
+    <SwapIndexCurvesId>default</SwapIndexCurvesId>
+    <SwaptionVolatilitiesId>default</SwaptionVolatilitiesId>
+    <CapFloorVolatilitiesId>default</CapFloorVolatilitiesId>
+    <FxSpotsId>default</FxSpotsId>
+    <FxVolatilitiesId>default</FxVolatilitiesId>
+    <CorrelationsId>default</CorrelationsId>
+    <YieldCurvesId>default</YieldCurvesId>
+  </Configuration>
+  <DiscountingCurves id="default">
+    <DiscountingCurve currency="USD">Yield/USD/USD-SOFR</DiscountingCurve>
+    <DiscountingCurve currency="EUR">Yield/EUR/EUR-ESTER</DiscountingCurve>
+  </DiscountingCurves>
+  <IndexForwardingCurves id="default">
+    <Index name="USD-SOFR">Yield/USD/USD-SOFR</Index>
+    <Index name="EUR-ESTER">Yield/EUR/EUR-ESTER</Index>
+    <Index name="EUR-EONIA">Yield/EUR/EUR-EONIA</Index>
+    <Index name="EUR-EURIBOR-3M">Yield/EUR/EUR-EURIBOR-3M</Index>
+    <Index name="EUR-EURIBOR-6M">Yield/EUR/EUR-EURIBOR-6M</Index>
+  </IndexForwardingCurves>
+  <SwapIndexCurves id="default">
+    <SwapIndex name="USD-CMS-SOFR-1Y">
+      <Discounting>USD-SOFR</Discounting>
+    </SwapIndex>
+    <SwapIndex name="USD-CMS-SOFR-30Y">
+      <Discounting>USD-SOFR</Discounting>
+    </SwapIndex>
+    <SwapIndex name="EUR-CMS-1Y">
+      <Discounting>EUR-ESTER</Discounting>
+    </SwapIndex>
+    <SwapIndex name="EUR-CMS-30Y">
+      <Discounting>EUR-ESTER</Discounting>
+    </SwapIndex>
+  </SwapIndexCurves>
+  <SwaptionVolatilities id="default">
+    <SwaptionVolatility key="USD">SwaptionVolatility/USD-SOFR/USD-SOFR</SwaptionVolatility>
+    <SwaptionVolatility key="USD-SOFR">SwaptionVolatility/USD-SOFR/USD-SOFR</SwaptionVolatility>
+    <SwaptionVolatility key="EUR">SwaptionVolatility/EUR/EUR</SwaptionVolatility>
+    <SwaptionVolatility key="EUR-ESTER">SwaptionVolatility/EUR/EUR</SwaptionVolatility>
+  </SwaptionVolatilities>
+  <CapFloorVolatilities id="default">
+    <CapFloorVolatility key="USD-SOFR">CapFloorVolatility/USD-SOFR/USD-SOFR</CapFloorVolatility>
+  </CapFloorVolatilities>
+  <FxSpots id="default">
+    <FxSpot pair="EURUSD">FX/EUR/USD</FxSpot>
+  </FxSpots>
+  <FxVolatilities id="default">
+    <FxVolatility pair="EURUSD">FXVolatility/EUR/USD/EURUSD</FxVolatility>
+  </FxVolatilities>
+  <Correlations id="default">
+    <Correlation name="USD-SOFR&amp;EUR-EONIA">Correlation/USD-SOFR&amp;EUR-EONIA</Correlation>
+    <Correlation name="FX-GENERIC-EUR-USD&amp;USD-SOFR">Correlation/FX-GENERIC-EUR-USD&amp;USD-SOFR</Correlation>
+    <Correlation name="FX-GENERIC-EUR-USD&amp;EUR-EONIA">Correlation/FX-GENERIC-EUR-USD&amp;EUR-EONIA</Correlation>
+    <!-- aliases used when the USD leg is fixed (ORE then labels the USD factor by the currency's OIS index) -->
+    <Correlation name="USD-FedFunds&amp;EUR-EONIA">Correlation/USD-FedFunds&amp;EUR-EONIA</Correlation>
+    <Correlation name="FX-GENERIC-EUR-USD&amp;USD-FedFunds">Correlation/FX-GENERIC-EUR-USD&amp;USD-FedFunds</Correlation>
+  </Correlations>
+  <YieldCurves id="default">
+    <!-- foreign curve of the EUR/USD volatility surface configuration -->
+    <YieldCurve name="EUR-IN-USD">Yield/EUR/EUR-IN-USD</YieldCurve>
+  </YieldCurves>
+</TodaysMarket>

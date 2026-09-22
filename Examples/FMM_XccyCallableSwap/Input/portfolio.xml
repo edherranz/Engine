@@ -1,0 +1,180 @@
+<?xml version="1.0"?>
+<!-- Cancellable cross-currency swap template (A9 test-bed): we pay USD-SOFR compounded in arrears
+     plus 20 bp quarterly on USD 10m and receive 2.25% annual (30/360) on EUR 9.7m, notionals
+     exchanged at start and maturity (5Y from 2025-02-12). We may cancel on every anniversary from
+     year one: on cancellation the notionals are exchanged again (we pay back USD 10m, receive back
+     EUR 9.7m) and all later payments stop.
+
+     Representation with stock ORE trades (the decomposition of Hagan, Callable X-CCY Swap, eq. 2.5):
+       XCCY_SWAP         the swap itself (cross-currency, notional exchanges at start and maturity);
+       XCCY_CANCEL_RIGHT a physically settled Bermudan option to enter the reverse swap (coupons and
+                         final exchanges only, no initial exchange) with exercise fees that carry the
+                         notional exchange on the cancellation date: the option holder pays USD 10m
+                         and receives EUR 9.7m. After exercise the two trades' coupons and final
+                         exchanges cancel and only the cancellation-date exchange remains.
+     The value of the cancellable swap is the sum of the two NPVs. -->
+<Portfolio>
+  <Trade id="XCCY_SWAP_USDSOFR_EURFIX_5Y">
+    <TradeType>Swap</TradeType>
+    <Envelope>
+      <CounterParty>CPTY</CounterParty>
+      <NettingSetId>NS</NettingSetId>
+    </Envelope>
+    <SwapData>
+      <LegData>
+        <LegType>Floating</LegType>
+        <Payer>true</Payer>
+        <Currency>USD</Currency>
+        <Notionals>
+          <Notional>10000000</Notional>
+          <Exchanges>
+            <NotionalInitialExchange>true</NotionalInitialExchange>
+            <NotionalFinalExchange>true</NotionalFinalExchange>
+            <NotionalAmortizingExchange>false</NotionalAmortizingExchange>
+          </Exchanges>
+        </Notionals>
+        <DayCounter>A360</DayCounter>
+        <PaymentConvention>MF</PaymentConvention>
+        <FloatingLegData>
+          <Index>USD-SOFR</Index>
+          <IsInArrears>true</IsInArrears>
+          <Spreads>
+            <Spread>0.0020</Spread>
+          </Spreads>
+        </FloatingLegData>
+        <ScheduleData>
+          <Rules>
+            <StartDate>2025-02-12</StartDate>
+            <EndDate>2030-02-12</EndDate>
+            <Tenor>3M</Tenor>
+            <Calendar>US,TARGET</Calendar>
+            <Convention>MF</Convention>
+            <TermConvention>MF</TermConvention>
+            <Rule>Forward</Rule>
+          </Rules>
+        </ScheduleData>
+      </LegData>
+      <LegData>
+        <LegType>Fixed</LegType>
+        <Payer>false</Payer>
+        <Currency>EUR</Currency>
+        <Notionals>
+          <Notional>9700000</Notional>
+          <Exchanges>
+            <NotionalInitialExchange>true</NotionalInitialExchange>
+            <NotionalFinalExchange>true</NotionalFinalExchange>
+            <NotionalAmortizingExchange>false</NotionalAmortizingExchange>
+          </Exchanges>
+        </Notionals>
+        <DayCounter>30/360</DayCounter>
+        <PaymentConvention>MF</PaymentConvention>
+        <FixedLegData>
+          <Rates>
+            <Rate>0.0225</Rate>
+          </Rates>
+        </FixedLegData>
+        <ScheduleData>
+          <Rules>
+            <StartDate>2025-02-12</StartDate>
+            <EndDate>2030-02-12</EndDate>
+            <Tenor>1Y</Tenor>
+            <Calendar>US,TARGET</Calendar>
+            <Convention>MF</Convention>
+            <TermConvention>MF</TermConvention>
+            <Rule>Forward</Rule>
+          </Rules>
+        </ScheduleData>
+      </LegData>
+    </SwapData>
+  </Trade>
+  <Trade id="XCCY_CANCEL_RIGHT_USDSOFR_EURFIX_5Y">
+    <TradeType>Swaption</TradeType>
+    <Envelope>
+      <CounterParty>CPTY</CounterParty>
+      <NettingSetId>NS</NettingSetId>
+    </Envelope>
+    <SwaptionData>
+      <OptionData>
+        <LongShort>Long</LongShort>
+        <OptionType>Call</OptionType>
+        <Style>Bermudan</Style>
+        <Settlement>Physical</Settlement>
+        <PayOffAtExpiry>false</PayOffAtExpiry>
+        <ExerciseFees>
+          <ExerciseFee currency="USD">10000000</ExerciseFee>
+          <ExerciseFee currency="EUR">-9700000</ExerciseFee>
+        </ExerciseFees>
+        <ExerciseDates>
+          <ExerciseDate>2026-02-12</ExerciseDate>
+          <ExerciseDate>2027-02-12</ExerciseDate>
+          <ExerciseDate>2028-02-14</ExerciseDate>
+          <ExerciseDate>2029-02-12</ExerciseDate>
+        </ExerciseDates>
+      </OptionData>
+      <LegData>
+        <LegType>Floating</LegType>
+        <Payer>false</Payer>
+        <Currency>USD</Currency>
+        <Notionals>
+          <Notional>10000000</Notional>
+          <Exchanges>
+            <NotionalInitialExchange>false</NotionalInitialExchange>
+            <NotionalFinalExchange>true</NotionalFinalExchange>
+            <NotionalAmortizingExchange>false</NotionalAmortizingExchange>
+          </Exchanges>
+        </Notionals>
+        <DayCounter>A360</DayCounter>
+        <PaymentConvention>MF</PaymentConvention>
+        <FloatingLegData>
+          <Index>USD-SOFR</Index>
+          <IsInArrears>true</IsInArrears>
+          <Spreads>
+            <Spread>0.0020</Spread>
+          </Spreads>
+        </FloatingLegData>
+        <ScheduleData>
+          <Rules>
+            <StartDate>2025-02-12</StartDate>
+            <EndDate>2030-02-12</EndDate>
+            <Tenor>3M</Tenor>
+            <Calendar>US,TARGET</Calendar>
+            <Convention>MF</Convention>
+            <TermConvention>MF</TermConvention>
+            <Rule>Forward</Rule>
+          </Rules>
+        </ScheduleData>
+      </LegData>
+      <LegData>
+        <LegType>Fixed</LegType>
+        <Payer>true</Payer>
+        <Currency>EUR</Currency>
+        <Notionals>
+          <Notional>9700000</Notional>
+          <Exchanges>
+            <NotionalInitialExchange>false</NotionalInitialExchange>
+            <NotionalFinalExchange>true</NotionalFinalExchange>
+            <NotionalAmortizingExchange>false</NotionalAmortizingExchange>
+          </Exchanges>
+        </Notionals>
+        <DayCounter>30/360</DayCounter>
+        <PaymentConvention>MF</PaymentConvention>
+        <FixedLegData>
+          <Rates>
+            <Rate>0.0225</Rate>
+          </Rates>
+        </FixedLegData>
+        <ScheduleData>
+          <Rules>
+            <StartDate>2025-02-12</StartDate>
+            <EndDate>2030-02-12</EndDate>
+            <Tenor>1Y</Tenor>
+            <Calendar>US,TARGET</Calendar>
+            <Convention>MF</Convention>
+            <TermConvention>MF</TermConvention>
+            <Rule>Forward</Rule>
+          </Rules>
+        </ScheduleData>
+      </LegData>
+    </SwaptionData>
+  </Trade>
+</Portfolio>

@@ -1,0 +1,94 @@
+<?xml version="1.0"?>
+<!-- Consistency check of the cancellation right's representation (portfolio.xml): the same right
+     written with the USD floating leg telescoped away (Hagan, Callable X-CCY Swap, eqs. 1.4-1.5).
+     Under single-curve SOFR discounting the exercised USD flows of the cancel right (receive SOFR +
+     20 bp, receive USD 10m at maturity, pay the USD 10m fee on the cancellation date) are worth
+     exactly the remaining 20 bp spread stream, so the right equals a Bermudan option into
+       receive 20 bp (A360, quarterly) on USD 10m, no notional exchange,
+       pay 2.25% (30/360, annual) on EUR 9.7m with the final exchange,
+     with the EUR 9.7m rebate on the cancellation date. Both representations must agree within the
+     Monte Carlo error. -->
+<Portfolio>
+  <Trade id="XCCY_CANCEL_RIGHT_REDUCED_USDSOFR_EURFIX_5Y">
+    <TradeType>Swaption</TradeType>
+    <Envelope>
+      <CounterParty>CPTY</CounterParty>
+      <NettingSetId>NS</NettingSetId>
+    </Envelope>
+    <SwaptionData>
+      <OptionData>
+        <LongShort>Long</LongShort>
+        <OptionType>Call</OptionType>
+        <Style>Bermudan</Style>
+        <Settlement>Physical</Settlement>
+        <PayOffAtExpiry>false</PayOffAtExpiry>
+        <ExerciseFees>
+          <ExerciseFee currency="EUR">-9700000</ExerciseFee>
+        </ExerciseFees>
+        <ExerciseDates>
+          <ExerciseDate>2026-02-12</ExerciseDate>
+          <ExerciseDate>2027-02-12</ExerciseDate>
+          <ExerciseDate>2028-02-14</ExerciseDate>
+          <ExerciseDate>2029-02-12</ExerciseDate>
+        </ExerciseDates>
+      </OptionData>
+      <LegData>
+        <LegType>Fixed</LegType>
+        <Payer>false</Payer>
+        <Currency>USD</Currency>
+        <Notionals>
+          <Notional>10000000</Notional>
+        </Notionals>
+        <DayCounter>A360</DayCounter>
+        <PaymentConvention>MF</PaymentConvention>
+        <FixedLegData>
+          <Rates>
+            <Rate>0.0020</Rate>
+          </Rates>
+        </FixedLegData>
+        <ScheduleData>
+          <Rules>
+            <StartDate>2025-02-12</StartDate>
+            <EndDate>2030-02-12</EndDate>
+            <Tenor>3M</Tenor>
+            <Calendar>US,TARGET</Calendar>
+            <Convention>MF</Convention>
+            <TermConvention>MF</TermConvention>
+            <Rule>Forward</Rule>
+          </Rules>
+        </ScheduleData>
+      </LegData>
+      <LegData>
+        <LegType>Fixed</LegType>
+        <Payer>true</Payer>
+        <Currency>EUR</Currency>
+        <Notionals>
+          <Notional>9700000</Notional>
+          <Exchanges>
+            <NotionalInitialExchange>false</NotionalInitialExchange>
+            <NotionalFinalExchange>true</NotionalFinalExchange>
+            <NotionalAmortizingExchange>false</NotionalAmortizingExchange>
+          </Exchanges>
+        </Notionals>
+        <DayCounter>30/360</DayCounter>
+        <PaymentConvention>MF</PaymentConvention>
+        <FixedLegData>
+          <Rates>
+            <Rate>0.0225</Rate>
+          </Rates>
+        </FixedLegData>
+        <ScheduleData>
+          <Rules>
+            <StartDate>2025-02-12</StartDate>
+            <EndDate>2030-02-12</EndDate>
+            <Tenor>1Y</Tenor>
+            <Calendar>US,TARGET</Calendar>
+            <Convention>MF</Convention>
+            <TermConvention>MF</TermConvention>
+            <Rule>Forward</Rule>
+          </Rules>
+        </ScheduleData>
+      </LegData>
+    </SwaptionData>
+  </Trade>
+</Portfolio>

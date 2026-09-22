@@ -1,0 +1,85 @@
+<?xml version="1.0"?>
+<!-- Correlation curves of the cancellable cross-currency swap template (loaded together with the
+     Products curve configuration). The values in marketdata_xccy.csv are synthetic scenario inputs,
+     not market observations: ORE's CrossAssetModel (and the FMM joint model) read the correlations
+     between the USD rate factor (USD-SOFR), the EUR rate factor (labelled by its OIS index
+     EUR-EONIA, the name ORE derives for the currency EUR) and the EUR/USD FX factor from here. -->
+<CurveConfiguration>
+  <Correlations>
+    <Correlation>
+      <CurveId>USD-SOFR&amp;EUR-EONIA</CurveId>
+      <CurveDescription>USD/EUR rate factor correlation (synthetic)</CurveDescription>
+      <CorrelationType>Generic</CorrelationType>
+      <Index1>USD-SOFR</Index1>
+      <Index2>EUR-EONIA</Index2>
+      <Conventions/>
+      <Dimension>ATM</Dimension>
+      <QuoteType>RATE</QuoteType>
+      <Extrapolation>true</Extrapolation>
+      <DayCounter>Actual/365 (Fixed)</DayCounter>
+      <Calendar>weekends only</Calendar>
+      <BusinessDayConvention>Modified Following</BusinessDayConvention>
+      <OptionTenors>*</OptionTenors>
+    </Correlation>
+    <Correlation>
+      <CurveId>FX-GENERIC-EUR-USD&amp;USD-SOFR</CurveId>
+      <CurveDescription>EUR/USD FX versus USD rate factor correlation (synthetic)</CurveDescription>
+      <CorrelationType>Generic</CorrelationType>
+      <Index1>FX-GENERIC-EUR-USD</Index1>
+      <Index2>USD-SOFR</Index2>
+      <Conventions/>
+      <Dimension>ATM</Dimension>
+      <QuoteType>RATE</QuoteType>
+      <Extrapolation>true</Extrapolation>
+      <DayCounter>Actual/365 (Fixed)</DayCounter>
+      <Calendar>weekends only</Calendar>
+      <BusinessDayConvention>Modified Following</BusinessDayConvention>
+      <OptionTenors>*</OptionTenors>
+    </Correlation>
+    <Correlation>
+      <CurveId>FX-GENERIC-EUR-USD&amp;EUR-EONIA</CurveId>
+      <CurveDescription>EUR/USD FX versus EUR rate factor correlation (synthetic)</CurveDescription>
+      <CorrelationType>Generic</CorrelationType>
+      <Index1>FX-GENERIC-EUR-USD</Index1>
+      <Index2>EUR-EONIA</Index2>
+      <Conventions/>
+      <Dimension>ATM</Dimension>
+      <QuoteType>RATE</QuoteType>
+      <Extrapolation>true</Extrapolation>
+      <DayCounter>Actual/365 (Fixed)</DayCounter>
+      <Calendar>weekends only</Calendar>
+      <BusinessDayConvention>Modified Following</BusinessDayConvention>
+      <OptionTenors>*</OptionTenors>
+    </Correlation>
+    <Correlation>
+      <CurveId>USD-FedFunds&amp;EUR-EONIA</CurveId>
+      <CurveDescription>USD/EUR rate factor correlation (synthetic; alias of the USD-SOFR curve for a fixed USD leg, whose factor ORE labels by the currency's OIS index)</CurveDescription>
+      <CorrelationType>Generic</CorrelationType>
+      <Index1>USD-FedFunds</Index1>
+      <Index2>EUR-EONIA</Index2>
+      <Conventions/>
+      <Dimension>ATM</Dimension>
+      <QuoteType>RATE</QuoteType>
+      <Extrapolation>true</Extrapolation>
+      <DayCounter>Actual/365 (Fixed)</DayCounter>
+      <Calendar>weekends only</Calendar>
+      <BusinessDayConvention>Modified Following</BusinessDayConvention>
+      <OptionTenors>*</OptionTenors>
+    </Correlation>
+    <Correlation>
+      <CurveId>FX-GENERIC-EUR-USD&amp;USD-FedFunds</CurveId>
+      <CurveDescription>EUR/USD FX versus USD rate factor correlation (synthetic; alias, see above)</CurveDescription>
+      <CorrelationType>Generic</CorrelationType>
+      <Index1>FX-GENERIC-EUR-USD</Index1>
+      <Index2>USD-FedFunds</Index2>
+      <Conventions/>
+      <Dimension>ATM</Dimension>
+      <QuoteType>RATE</QuoteType>
+      <Extrapolation>true</Extrapolation>
+      <DayCounter>Actual/365 (Fixed)</DayCounter>
+      <Calendar>weekends only</Calendar>
+      <BusinessDayConvention>Modified Following</BusinessDayConvention>
+      <OptionTenors>*</OptionTenors>
+    </Correlation>
+  </Correlations>
+</CurveConfiguration>

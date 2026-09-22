@@ -494,6 +494,13 @@ public:
         parameters_.set(analytic, parameter, val);
     }
 
+    //! store an object under (analytic, parameter) so that an analytic running later in the same
+    //! application run finds it through loadFromParameters() / loadParameterXML() instead of a file
+    void setParameterObject(const std::string& analytic, const std::string& parameter,
+                            const QuantLib::ext::any& val) {
+        parameters_.set(analytic, parameter, val);
+    }
+
     // setters for backward compatibility, use setParameter directly when possible
 
     void setOutputCurves(bool b) { setParameter("npv", "outputCurves", to_string(b)); }

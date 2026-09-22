@@ -308,6 +308,12 @@ void FmmExposureAnalyticImpl::runAnalytic(const QuantLib::ext::shared_ptr<InMemo
     analytic()->npvCubes()[LABEL]["cube"] =
         QuantLib::ext::make_shared<NPVCubeWithMetaData>(cube, sgd, false, QuantLib::ext::nullopt);
     analytic()->mktCubes()[LABEL]["scenariodata"] = asd;
+    // an XVA analytic running later in the same application run picks the cube and the scenario
+    // data up from the parameter store (XvaVariables::loadCube) before it falls back to the files
+    // named by xva/cubeFile and xva/scenarioFile; the cube's date grid is the simulation grid, so
+    // the XVA analytic's own scenario generator data describes it
+    inputs_->setParameterObject("xva", "cubeFile", QuantLib::ext::shared_ptr<NPVCube>(cube));
+    inputs_->setParameterObject("xva", "scenarioFile", QuantLib::ext::shared_ptr<AggregationScenarioData>(asd));
 
     // 6. reports
     auto t0Report = QuantLib::ext::make_shared<InMemoryReport>(inputs_->reportBufferSize());

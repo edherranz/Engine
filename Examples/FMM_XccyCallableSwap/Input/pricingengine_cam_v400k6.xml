@@ -1,0 +1,50 @@
+<?xml version="1.0"?>
+<!-- Stock ORE comparator for the cancellable cross-currency swap: the swap on the discounting
+     cross-currency engine, the cancellation right on ORE's CrossAssetModel, registered under the model name LGM (one-factor LGM per
+     currency, Hull-White reversion 3%, lognormal EUR/USD FX), each LGM bootstrapped to its
+     coterminal ATM swaptions (USD on the SOFR surface, EUR on the EURIBOR-based EUR surface with
+     ESTR discounting), the FX volatility bootstrapped to ATM-forward EUR/USD options expiring on the
+     exercise dates, correlations from the market; Longstaff-Schwartz Monte Carlo. -->
+<PricingEngines>
+  <Product type="Swap">
+    <Model>DiscountedCashflows</Model>
+    <ModelParameters/>
+    <Engine>DiscountingSwapEngine</Engine>
+    <EngineParameters/>
+  </Product>
+  <Product type="CrossCurrencySwap">
+    <Model>DiscountedCashflows</Model>
+    <ModelParameters/>
+    <Engine>DiscountingCrossCurrencySwapEngine</Engine>
+    <EngineParameters/>
+  </Product>
+  <Product type="BermudanSwaption_XCcy">
+    <Model>LGM</Model>
+    <ModelParameters>
+      <Parameter name="Calibration">Bootstrap</Parameter>
+      <Parameter name="CalibrationStrategy">CoterminalATM</Parameter>
+      <Parameter name="Reversion">0.03</Parameter>
+      <Parameter name="ReversionType">HullWhite</Parameter>
+      <Parameter name="Volatility">0.01</Parameter>
+      <Parameter name="VolatilityType">Hagan</Parameter>
+      <Parameter name="ShiftHorizon">0.5</Parameter>
+      <Parameter name="Tolerance">0.20</Parameter>
+      <Parameter name="FxCalibration">Bootstrap</Parameter>
+      <Parameter name="FxVolatility">0.08</Parameter>
+    </ModelParameters>
+    <Engine>MC</Engine>
+    <EngineParameters>
+      <Parameter name="Training.Sequence">MersenneTwisterAntithetic</Parameter>
+      <Parameter name="Training.Seed">42</Parameter>
+      <Parameter name="Training.Samples">400000</Parameter>
+      <Parameter name="Pricing.Sequence">MersenneTwisterAntithetic</Parameter>
+      <Parameter name="Pricing.Seed">17</Parameter>
+      <Parameter name="Pricing.Samples">400000</Parameter>
+      <Parameter name="Training.BasisFunction">Monomial</Parameter>
+      <Parameter name="Training.BasisFunctionOrder">6</Parameter>
+      <Parameter name="BrownianBridgeOrdering">Steps</Parameter>
+      <Parameter name="SobolDirectionIntegers">JoeKuoD7</Parameter>
+      <Parameter name="MinObsDate">true</Parameter>
+    </EngineParameters>
+  </Product>
+</PricingEngines>

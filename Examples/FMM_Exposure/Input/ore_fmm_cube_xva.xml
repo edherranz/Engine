@@ -1,0 +1,82 @@
+<?xml version="1.0"?>
+<!-- A7 route 1 in one run: the fmmExposure analytic simulates the netting set on the FMM scenario
+     model and hands its cube and scenario data to ORE's unmodified XVA analytic in memory (the
+     application inserts fmmExposure before xva; XvaVariables::loadCube finds the objects in the
+     parameter store before it would look for xva/cubeFile and xva/scenarioFile). The classic
+     simulation stays off; the cube and scenario data are still written to the output folder. -->
+<ORE>
+  <Setup>
+    <Parameter name="asofDate">2025-02-10</Parameter>
+    <Parameter name="inputPath">Input</Parameter>
+    <Parameter name="outputPath">Output/fmm_cube_xva</Parameter>
+    <Parameter name="logFile">log.txt</Parameter>
+    <Parameter name="logMask">15</Parameter>
+    <Parameter name="marketDataFile">../../Products/Input/marketdata.csv</Parameter>
+    <Parameter name="fixingDataFile">../../Products/Input/fixings.csv</Parameter>
+    <Parameter name="implyTodaysFixings">N</Parameter>
+    <Parameter name="curveConfigFile">../../Products/Input/curveconfig.xml</Parameter>
+    <Parameter name="conventionsFile">../../Products/Input/conventions.xml</Parameter>
+    <Parameter name="marketConfigFile">todaysmarket.xml</Parameter>
+    <Parameter name="pricingEnginesFile">pricingengine.xml</Parameter>
+    <Parameter name="portfolioFile">portfolio.xml</Parameter>
+    <Parameter name="observationModel">None</Parameter>
+    <Parameter name="continueOnError">false</Parameter>
+  </Setup>
+  <Markets>
+    <Parameter name="lgmcalibration">default</Parameter>
+    <Parameter name="fxcalibration">default</Parameter>
+    <Parameter name="pricing">default</Parameter>
+    <Parameter name="simulation">default</Parameter>
+  </Markets>
+  <Analytics>
+    <Analytic type="npv">
+      <Parameter name="active">Y</Parameter>
+      <Parameter name="baseCurrency">USD</Parameter>
+      <Parameter name="outputFileName">npv.csv</Parameter>
+      <Parameter name="additionalResults">Y</Parameter>
+    </Analytic>
+    <Analytic type="simulation">
+      <Parameter name="active">N</Parameter>
+      <Parameter name="simulationConfigFile">simulation.xml</Parameter>
+      <Parameter name="pricingEnginesFile">pricingengine.xml</Parameter>
+      <Parameter name="baseCurrency">USD</Parameter>
+      <Parameter name="cubeFile">cube.csv.gz</Parameter>
+      <Parameter name="aggregationScenarioDataFileName">scenariodata.csv.gz</Parameter>
+    </Analytic>
+    <Analytic type="fmmExposure">
+      <Parameter name="active">Y</Parameter>
+      <Parameter name="fmmScenarioModelFile">fmmscenariomodel_grid.xml</Parameter>
+      <Parameter name="trainingPaths">16384</Parameter>
+      <Parameter name="trainingSeed">4242</Parameter>
+      <Parameter name="trainingSequence">MersenneTwister</Parameter>
+      <Parameter name="policyTrainingPaths">16384</Parameter>
+      <Parameter name="policyValuationPaths">16384</Parameter>
+      <Parameter name="policyTrainingSeed">42</Parameter>
+      <Parameter name="policyValuationSeed">4243</Parameter>
+      <Parameter name="regressionOrder">2</Parameter>
+      <Parameter name="minRegressionPaths">100</Parameter>
+      <Parameter name="includeFlowsOnExposureDate">false</Parameter>
+      <Parameter name="calibrationTolerance">0.2</Parameter>
+    </Analytic>
+    <Analytic type="xva">
+      <Parameter name="active">Y</Parameter>
+      <Parameter name="csaFile">netting.xml</Parameter>
+      <Parameter name="baseCurrency">USD</Parameter>
+      <Parameter name="exposureProfiles">Y</Parameter>
+      <Parameter name="exposureProfilesByTrade">Y</Parameter>
+      <Parameter name="quantile">0.95</Parameter>
+      <Parameter name="calculationType">Symmetric</Parameter>
+      <Parameter name="allocationMethod">None</Parameter>
+      <Parameter name="marginalAllocationLimit">1.0</Parameter>
+      <Parameter name="exerciseNextBreak">N</Parameter>
+      <Parameter name="cva">Y</Parameter>
+      <Parameter name="dva">N</Parameter>
+      <Parameter name="fva">N</Parameter>
+      <Parameter name="colva">N</Parameter>
+      <Parameter name="collateralFloor">N</Parameter>
+      <Parameter name="mporCashFlowMode">BothPay</Parameter>
+      <Parameter name="rawCubeOutputFile">rawcube.csv</Parameter>
+      <Parameter name="netCubeOutputFile">netcube.csv</Parameter>
+    </Analytic>
+  </Analytics>
+</ORE>
