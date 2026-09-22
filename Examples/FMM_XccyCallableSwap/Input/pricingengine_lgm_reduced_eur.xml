@@ -1,0 +1,33 @@
+<?xml version="1.0"?>
+<!-- ORE's LGM grid engine on Hagan's reduced EUR trade (the reference implementation of the standard
+     reduction): one-factor LGM, Hull-White reversion 3%, bootstrapped to the coterminal EUR
+     swaptions at the fixed leg's rate (2.25%; the cross-currency FMM engine calibrates at
+     R_fix - s_eq, about 2.06%). -->
+<PricingEngines>
+  <Product type="Swap">
+    <Model>DiscountedCashflows</Model>
+    <ModelParameters/>
+    <Engine>DiscountingSwapEngine</Engine>
+    <EngineParameters/>
+  </Product>
+  <Product type="BermudanSwaption_NonStandard">
+    <Model>LGM</Model>
+    <ModelParameters>
+      <Parameter name="Calibration">Bootstrap</Parameter>
+      <Parameter name="CalibrationStrategy">CoterminalDealStrike</Parameter>
+      <Parameter name="Reversion">0.03</Parameter>
+      <Parameter name="ReversionType">HullWhite</Parameter>
+      <Parameter name="Volatility">0.01</Parameter>
+      <Parameter name="VolatilityType">Hagan</Parameter>
+      <Parameter name="ShiftHorizon">0.5</Parameter>
+      <Parameter name="Tolerance">0.20</Parameter>
+    </ModelParameters>
+    <Engine>Grid</Engine>
+    <EngineParameters>
+      <Parameter name="sy">5.0</Parameter>
+      <Parameter name="ny">30</Parameter>
+      <Parameter name="sx">5.0</Parameter>
+      <Parameter name="nx">30</Parameter>
+    </EngineParameters>
+  </Product>
+</PricingEngines>

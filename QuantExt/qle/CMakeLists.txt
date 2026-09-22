@@ -229,6 +229,7 @@ models/fmmexposure.cpp
 models/fmmlsmpricer.cpp
 models/fmmparametrization.cpp
 models/fmmxccyreduction.cpp
+models/fmmjointmodel.cpp
 models/forwardmarketmodel.cpp
 models/fmmgrid.cpp
 models/fmmirmodel.cpp
@@ -829,6 +830,7 @@ models/fmmexposure.hpp
 models/fmmlsmpricer.hpp
 models/fmmparametrization.hpp
 models/fmmxccyreduction.hpp
+models/fmmjointmodel.hpp
 models/forwardmarketmodel.hpp
 models/fmmgrid.hpp
 models/fmmirmodel.hpp

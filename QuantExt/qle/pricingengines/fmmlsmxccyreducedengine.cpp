@@ -18,8 +18,10 @@
 
 #include <qle/pricingengines/fmmlsmxccyreducedengine.hpp>
 
+#include <ql/pricingengines/blackformula.hpp>
 #include <ql/settings.hpp>
 
+#include <cmath>
 #include <memory>
 
 namespace QuantExt {
@@ -89,8 +91,20 @@ void FmmLsmXccyReducedEngine::calculate() const {
     out["fmmXccyTelescopedCoupons"] = static_cast<Real>(diag.telescopedCoupons);
     out["fmmXccyConvertedFlows"] = static_cast<Real>(diag.convertedFlows);
     std::vector<Date> noticeDates, settleDates;
-    std::vector<Real> eqSpreads, strikes, fixedRates, annA, annB, gamA, gamB, fwdA, fwdFx, fees;
-    for (const auto& r : diag.rights) {
+    std::vector<Real> eqSpreads, strikes, fixedRates, annA, annB, gamA, gamB, fwdA, fwdB, fwdFx, fees, european;
+    Real maxEuropean = 0.0;
+    for (Size k = 0; k < diag.rights.size(); ++k) {
+        const auto& r = diag.rights[k];
+        // European swaption of the right at its calibration target (Hagan eq. 3.40): N_B L_B
+        // Bachelier(K, S_B, sigma sqrt(t)), payer when the holder pays fixed
+        Real eur = 0.0;
+        if (k < rec.targetVols.size() && rec.targetVols[k] > 0.0 && r.expiry > 0.0)
+            eur = r.notionalB * r.annuityB *
+                  bachelierBlackFormula(r.holderPaysFixed ? Option::Call : Option::Put, r.strike, r.forwardSwapRateB,
+                                        rec.targetVols[k] * std::sqrt(r.expiry));
+        european.push_back(eur);
+        maxEuropean = std::max(maxEuropean, eur);
+        fwdB.push_back(r.forwardSwapRateB);
         noticeDates.push_back(r.noticeDate);
         settleDates.push_back(r.settleDate);
         eqSpreads.push_back(r.equivalentSpread);
@@ -114,6 +128,12 @@ void FmmLsmXccyReducedEngine::calculate() const {
     out["fmmXccyGammaA"] = gamA;
     out["fmmXccyGammaB"] = gamB;
     out["fmmXccyForwardSwapRateA"] = fwdA;
+    out["fmmXccyForwardSwapRateB"] = fwdB;
+    out["fmmXccyEuropeanValuesB"] = european;
+    out["fmmXccyMaxEuropeanValueB"] = maxEuropean;
+    out["fmmXccyPayDatesA"] = diag.aPayDates;
+    out["fmmXccyForwardFxAtPayA"] = diag.aForwardFx;
+    out["fmmXccySpreadRatesA"] = diag.aSpreadRates;
     out["fmmXccyForwardFxAtSettle"] = fwdFx;
     out["fmmXccyFeeFlowsB"] = fees;
     out["fmmXccyCalibrationStrikes"] = rec.strikes;

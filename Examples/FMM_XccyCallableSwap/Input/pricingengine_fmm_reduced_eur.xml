@@ -1,0 +1,46 @@
+<?xml version="1.0"?>
+<!-- the single-currency FMM engine on Hagan's reduced EUR trade (generated file, see
+     validation/a9_xccy_reference_trade.py): calibration at the fixed leg's rate as ORE's LGM. -->
+<PricingEngines>
+  <Product type="Swap">
+    <Model>DiscountedCashflows</Model>
+    <ModelParameters/>
+    <Engine>DiscountingSwapEngine</Engine>
+    <EngineParameters/>
+  </Product>
+  <Product type="CrossCurrencySwap">
+    <Model>DiscountedCashflows</Model>
+    <ModelParameters/>
+    <Engine>DiscountingCrossCurrencySwapEngine</Engine>
+    <EngineParameters/>
+  </Product>
+  <Product type="BermudanSwaption_NonStandard">
+    <Model>FMM</Model>
+    <ModelParameters>
+      <Parameter name="Calibration">Bootstrap</Parameter>
+      <Parameter name="CalibrationStrategy">CoterminalDealStrike</Parameter>
+      <Parameter name="Tolerance">0.20</Parameter>
+      <Parameter name="Volatility">0.0075</Parameter>
+      <Parameter name="VolatilityType">DisplacedDiffusion</Parameter>
+      <Parameter name="Shift">1/tau</Parameter>
+      <Parameter name="RhoInf">0.6</Parameter>
+      <Parameter name="Beta">0.08</Parameter>
+      <Parameter name="Factors">3</Parameter>
+      <Parameter name="ApproximationMethod">EffectiveShift</Parameter>
+      <Parameter name="Grid">3M</Parameter>
+      <!-- the EUR swaption helpers start two TARGET business days after the notice date -->
+      <Parameter name="GridToleranceDays">5</Parameter>
+    </ModelParameters>
+    <Engine>LSM</Engine>
+    <EngineParameters>
+      <Parameter name="TrainingPaths">32768</Parameter>
+      <Parameter name="ValuationPaths">32768</Parameter>
+      <Parameter name="TrainingSeed">42</Parameter>
+      <Parameter name="ValuationSeed">424242</Parameter>
+      <Parameter name="BasisOrder">2</Parameter>
+      <Parameter name="DualBound">true</Parameter>
+      <Parameter name="DualOuterPaths">512</Parameter>
+      <Parameter name="DualInnerPaths">64</Parameter>
+    </EngineParameters>
+  </Product>
+</PricingEngines>

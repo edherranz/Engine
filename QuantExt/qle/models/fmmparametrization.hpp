@@ -103,6 +103,13 @@ public:
     Real integratedCovarianceSingleDecay(const Size i, const Size j, const Time s, const Time e) const;
     //! exact int_s^e lambda_k(u)^2 du (no decay; the Y_kk integrand for shift 1/tau, LM2020 eq. 31)
     Real integratedLevelVariance(const Size k, const Time s, const Time e) const;
+    //! exact int_s^e lambda_i(u) g_i(u) lambda_j(u) g_j(u) du WITHOUT the correlation factor: the
+    //! building block of cross-currency covariances (A9.5), where the correlation between two
+    //! models' rates is supplied from outside
+    Real integratedVolProduct(const Size i, const Size j, const Time s, const Time e) const;
+    //! exact int_s^e lambda_i(u) g_i(u) du: the covariance of rate i with a constant-vol factor
+    //! (the FX of the joint model, A9.5) per unit of that factor's vol and correlation
+    Real integratedVolDecay(const Size i, const Time s, const Time e) const;
     //! exact int_s^e g_k(u) du (front-stub drift term, FMM_SPEC.md section 4.3)
     Real integratedDecay(const Size k, const Time s, const Time e) const;
     //! points in (s, e) where the integrand changes analytic form (vol breakpoints, grid dates)

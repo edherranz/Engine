@@ -200,6 +200,50 @@ Real FmmParametrization::integratedCovarianceSingleDecay(const Size i, const Siz
     return sum * correlation(i, j);
 }
 
+Real FmmParametrization::integratedVolProduct(const Size i, const Size j, const Time s, Time e) const {
+    QL_REQUIRE(i >= 1 && i <= M_ && j >= 1 && j <= M_, "FmmParametrization: vol product index out of range");
+    e = std::min(e, std::min(rateTimes_[i], rateTimes_[j]));
+    if (e <= s + 42.0 * QL_EPSILON)
+        return 0.0;
+    std::vector<Time> knots = integrationKnots(s, e);
+    knots.insert(knots.begin(), s);
+    knots.push_back(e);
+    Real sum = 0.0;
+    for (Size k = 0; k + 1 < knots.size(); ++k)
+        sum += intervalCovariance(i, j, knots[k], knots[k + 1], true, true);
+    return sum;
+}
+
+Real FmmParametrization::integratedVolDecay(const Size i, const Time s, Time e) const {
+    QL_REQUIRE(i >= 1 && i <= M_, "FmmParametrization: vol decay index out of range");
+    e = std::min(e, rateTimes_[i]);
+    if (e <= s + 42.0 * QL_EPSILON)
+        return 0.0;
+    std::vector<Time> knots = integrationKnots(s, e);
+    knots.insert(knots.begin(), s);
+    knots.push_back(e);
+    Real sum = 0.0;
+    for (Size p = 0; p + 1 < knots.size(); ++p) {
+        const Time a = knots[p], b = knots[p + 1];
+        const Time mid = 0.5 * (a + b);
+        if (decay(i, mid) < QL_EPSILON)
+            continue;
+        if (lgm_ != nullptr) {
+            // lambda g = alpha(u) [H(T_i) - H(max(u, T_{i-1}))], piecewise smooth: GL 16 per piece
+            static const GaussLegendreIntegration quad(16);
+            const Real half = 0.5 * (b - a), c = 0.5 * (a + b);
+            sum += half * quad([this, i, c, half](const Real x) {
+                const Time u = c + half * x;
+                return volLevel(i, u) * decay(i, u);
+            });
+        } else {
+            // piecewise-constant level, linear decay: exact
+            sum += volLevel(i, mid) * 0.5 * (decay(i, a) + decay(i, b)) * (b - a);
+        }
+    }
+    return sum;
+}
+
 Real FmmParametrization::integratedLevelVariance(const Size k, const Time s, const Time e) const {
     QL_REQUIRE(k >= 1 && k <= M_, "FmmParametrization: level variance index out of range");
     if (e <= s + 42.0 * QL_EPSILON)

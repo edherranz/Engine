@@ -332,6 +332,7 @@
 #include <qle/models/fmmexposure.hpp>
 #include <qle/models/fmmgrid.hpp>
 #include <qle/models/fmmirmodel.hpp>
+#include <qle/models/fmmjointmodel.hpp>
 #include <qle/models/fmmlsmpricer.hpp>
 #include <qle/models/fmmparametrization.hpp>
 #include <qle/models/fmmxccyreduction.hpp>

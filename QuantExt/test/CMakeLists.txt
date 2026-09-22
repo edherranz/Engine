@@ -64,6 +64,7 @@ fillemptymatrix.cpp
 fmm.cpp
 fmmexposure.cpp
 fmmxccy.cpp
+fmmjoint.cpp
 formulabasedcoupon.cpp
 forwardbond.cpp
 fxvolsmile.cpp

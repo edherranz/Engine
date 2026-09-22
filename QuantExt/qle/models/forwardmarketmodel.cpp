@@ -152,7 +152,14 @@ void ForwardMarketModel::evolve(State& state, const StepData& step, const Array&
 }
 
 void ForwardMarketModel::evolveWithCorrelatedShocks(State& state, const StepData& step, const Array& v) const {
+    evolveWithCorrelatedShocks(state, step, v, Array());
+}
+
+void ForwardMarketModel::evolveWithCorrelatedShocks(State& state, const StepData& step, const Array& v,
+                                                    const Array& extraDrift) const {
     QL_REQUIRE(v.size() == M_ + 1, "ForwardMarketModel: need " << M_ + 1 << " shocks, got " << v.size());
+    QL_REQUIRE(extraDrift.empty() || extraDrift.size() == M_,
+               "ForwardMarketModel: extra drift needs " << M_ << " entries, got " << extraDrift.size());
     QL_REQUIRE(std::fabs(state.t - step.s) < 1.0e-8,
                "ForwardMarketModel::evolve: state time " << state.t << " does not match step start " << step.s);
     const bool dd = p_->volType() == FmmParametrization::LocalVolType::DisplacedDiffusion;
@@ -171,6 +178,8 @@ void ForwardMarketModel::evolveWithCorrelatedShocks(State& state, const StepData
     Array q(M_), drift1(M_, 0.0);
     driftFactors(state.R, q);
     addDrift(step, q, drift1);
+    if (!extraDrift.empty())
+        drift1 += extraDrift;
     Array Rt(M_);
     for (Size j = 1; j <= M_; ++j) {
         if (p_->rateTime(j) <= step.s + tEps) {
@@ -186,6 +195,8 @@ void ForwardMarketModel::evolveWithCorrelatedShocks(State& state, const StepData
     Array q2(M_), drift2(M_, 0.0);
     driftFactors(Rt, q2);
     addDrift(step, q2, drift2);
+    if (!extraDrift.empty())
+        drift2 += extraDrift;
 
     const Real yBefore = step.live > 0 ? state.Ykk[step.live - 1] - state.YkkSnap[step.live - 1] : 0.0;
     Real scaleLive = 1.0;

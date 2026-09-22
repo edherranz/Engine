@@ -210,6 +210,9 @@ FmmCallableInstrument fmmMapXccyReduced(const MultiLegOption::arguments& args, c
                     aFloats.push_back(t);
                     couponSpans.push_back({t.startIdx, t.payIdx});
                     ++diag.telescopedCoupons;
+                    diag.aPayDates.push_back(t.pay);
+                    diag.aForwardFx.push_back(fwdFx(t.pay));
+                    diag.aSpreadRates.push_back(t.spread);
                 } else if (auto fx = QuantLib::ext::dynamic_pointer_cast<FixedRateCoupon>(cf)) {
                     QL_REQUIRE(fx->accrualStartDate() >= today || fx->accrualEndDate() == fx->date(),
                                "fmmMapXccyReduced: " << what.str() << ": fixed coupon accruing at the valuation date");
@@ -303,6 +306,7 @@ FmmCallableInstrument fmmMapXccyReduced(const MultiLegOption::arguments& args, c
         r.feeFlowB = fee;
         // B fixed leg after settlement: notional, annuity, fixed rate, convexity ratio (from the notice date)
         Real annuityB = 0.0, convexityB = 0.0, signedFixed = 0.0, signB = 0.0;
+        Date lastB;
         for (const auto& c : bFixed) {
             if (c.payIdx <= settleIdx)
                 continue;
@@ -315,12 +319,16 @@ FmmCallableInstrument fmmMapXccyReduced(const MultiLegOption::arguments& args, c
             convexityB += c.accrual * df * (grid.times()[c.payIdx] - r.expiry);
             signedFixed += c.signedAmount * df; // annuity-weighted: R_fix for a constant-rate leg
             r.swapLengthB = std::max(r.swapLengthB, grid.times()[c.payIdx] - grid.times()[settleIdx]);
+            if (lastB == Date() || c.pay > lastB)
+                lastB = c.pay;
         }
         QL_REQUIRE(annuityB > 0.0 && r.notionalB > 0.0,
                    "fmmMapXccyReduced: no B fixed coupon after the settlement date " << ds);
         r.annuityB = annuityB;
         r.gammaB = convexityB / annuityB;
         r.fixedRate = std::fabs(signedFixed) / (r.notionalB * annuityB);
+        r.forwardSwapRateB = (inputs.discountB->discount(ds) - inputs.discountB->discount(lastB)) / annuityB;
+        r.holderPaysFixed = signB < 0.0;
         // A floating leg after settlement: spread value, annuity, ATM rate, convexity ratio
         Real annuityA = 0.0, convexityA = 0.0, spreadValueB = 0.0;
         Date firstA, lastA;

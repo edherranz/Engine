@@ -95,6 +95,11 @@ public:
     //! coarse window is a distributionally exact coarse shock vector — the seam used by the
     //! paired common-random-numbers bias study (FMM_SPEC.md section 9.5/9.7)
     void evolveWithCorrelatedShocks(State& state, const StepData& step, const Array& v) const;
+    //! same, with an additional drift per rate over the step (on ln(R_j + delta_j) for the
+    //! displaced type, on R_j for the normal type): the quanto adjustment of a foreign model
+    //! simulated under another currency's spot measure (A9.5, FMM_SPEC.md section 8)
+    void evolveWithCorrelatedShocks(State& state, const StepData& step, const Array& v,
+                                    const Array& extraDrift) const;
 
     //! bank account B(t) (LM2020 eq. 26)
     Real bankAccount(const State& state) const;

@@ -69,6 +69,8 @@ struct FmmXccyReductionRight {
     Real annuityA = 0.0, annuityB = 0.0; //!< L_k^A(0), L_k^B(0) per unit notional, own accruals (eqs. 1.8c, 1.8e)
     Real gammaA = 0.0, gammaB = 0.0;     //!< C^{fwd} / L^{fwd} from the notice date (eqs. 3.12b, 3.15b)
     Real forwardSwapRateA = 0.0;         //!< ATM rate of the A coterminal swap on the A discount curve
+    Real forwardSwapRateB = 0.0;         //!< forward rate of the reduced B swap (settle to the last B payment)
+    bool holderPaysFixed = false;        //!< the reduced structure is a payer swaption from the holder's view
     Real fixedRate = 0.0;                //!< annuity-weighted B fixed rate after settlement (R_fix^B)
     Real equivalentSpread = 0.0;         //!< s_k^eq (eq. 3.3b), positive when the spread offsets the fixed rate
     Real strike = 0.0;                   //!< R_fix - s_k^eq (eq. 3.3a)
@@ -82,6 +84,9 @@ struct FmmXccyReductionDiagnostics {
     Real spreadStreamValueB = 0.0; //!< t = 0 B value of the converted A spread stream (all future coupons)
     Size telescopedCoupons = 0;    //!< A floating coupons telescoped
     Size convertedFlows = 0;       //!< deterministic A flows converted with the forward FX
+    std::vector<Date> aPayDates;   //!< payment dates of the A floating coupons (after today)
+    std::vector<Real> aForwardFx;  //!< F^{A/B}(0; T) at those dates
+    std::vector<Real> aSpreadRates; //!< the coupons' spreads
 };
 
 //! contractual dates of the legs and the exercise (accrual boundaries, payments, notice and
