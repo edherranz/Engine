@@ -165,6 +165,42 @@ QuantLib::ext::shared_ptr<FmmIrModel> FmmBuilder::irModel() const {
     return irModel_;
 }
 
+void FmmBuilder::setGridDates(const std::set<Date>& dates) {
+    auto data = QuantLib::ext::dynamic_pointer_cast<FmmData>(data_);
+    QL_REQUIRE(data, "FmmBuilder: data is not FmmData");
+    std::vector<Date> v(dates.begin(), dates.end());
+    if (v == data->gridDates())
+        return;
+    data->gridDates() = v;
+    parametrizationInitializedOnAnchorDate_ = Date();
+    marketObserver_->update(); // recalibrate on the next calculation
+    update();
+}
+
+QuantLib::ext::shared_ptr<FmmGrid> FmmBuilder::prepareGrid() const {
+    referenceDate_ = calibrationDiscountCurve_->referenceDate();
+    initParametrization();
+    return grid_;
+}
+
+void FmmBuilder::setTargetOverrides(const std::vector<std::pair<Real, Real>>& overrides) {
+    if (overrides == targetOverrides_)
+        return;
+    targetOverrides_ = overrides;
+    marketObserver_->update();
+    update();
+}
+
+std::vector<Date> FmmBuilder::basketExpiryDates() const {
+    std::vector<Date> out;
+    for (const auto& h : swaptionBasket_) {
+        auto sh = QuantLib::ext::dynamic_pointer_cast<SwaptionHelper>(h);
+        QL_REQUIRE(sh, "FmmBuilder: calibration basket must consist of swaption helpers");
+        out.push_back(sh->swaption()->exercise()->dates().front());
+    }
+    return out;
+}
+
 void FmmBuilder::initParametrization() const {
     if (parametrizationInitializedOnAnchorDate_ == referenceDate_)
         return;
@@ -297,7 +333,10 @@ void FmmBuilder::calibrate() const {
             Real K = 0.0, nominal = 1.0;
             Option::Type type = Option::Call;
             FmmSwaptionVolTarget t;
-            t.swap = fmmSwapSpecFromSwaption(*grid_, args, data->gridToleranceDays(), K, type, nominal);
+            // the helper's floating leg over the model curve (a term-rate index, or the pricing
+            // discount curve of a cross-currency reduction) enters as deterministic basis flows
+            t.swap = fmmSwapSpecFromSwaption(*grid_, args, data->gridToleranceDays(), K, type, nominal,
+                                             modelDiscountCurve_);
             t.strike = K;
             if (sh->volatilityType() == Normal) {
                 t.normalVol = sh->volatility()->value();
@@ -309,6 +348,15 @@ void FmmBuilder::calibrate() const {
             lbl << "swaption_" << p.rateTime(t.swap.a) << "y_x_" << p.rateTime(t.swap.b) - p.rateTime(t.swap.a) << "y";
             t.label = lbl.str();
             targets.push_back(t);
+        }
+        if (!targetOverrides_.empty()) {
+            QL_REQUIRE(targetOverrides_.size() == targets.size(),
+                       "FmmBuilder: " << targetOverrides_.size() << " target overrides for " << targets.size()
+                                      << " basket instruments");
+            for (Size k = 0; k < targets.size(); ++k) {
+                targets[k].strike = targetOverrides_[k].first;
+                targets[k].normalVol = targetOverrides_[k].second;
+            }
         }
         std::sort(targets.begin(), targets.end(),
                   [](const FmmSwaptionVolTarget& a, const FmmSwaptionVolTarget& b) { return a.swap.a < b.swap.a; });

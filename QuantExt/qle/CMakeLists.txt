@@ -228,6 +228,7 @@ models/fmmcalibration.cpp
 models/fmmexposure.cpp
 models/fmmlsmpricer.cpp
 models/fmmparametrization.cpp
+models/fmmxccyreduction.cpp
 models/forwardmarketmodel.cpp
 models/fmmgrid.cpp
 models/fmmirmodel.cpp
@@ -334,6 +335,7 @@ pricingengines/fddefaultableequityjumpdiffusionconvertiblebondengine.cpp
 pricingengines/fmmanalyticswaptionengine.cpp
 pricingengines/fmmlsmcallablebondengine.cpp
 pricingengines/fmmlsmmultilegoptionengine.cpp
+pricingengines/fmmlsmxccyreducedengine.cpp
 pricingengines/forwardenabledbondengine.cpp
 pricingengines/forwardriskyannuitystrike.cpp
 pricingengines/indexcdsoptionbaseengine.cpp
@@ -826,6 +828,7 @@ models/fmmcalibration.hpp
 models/fmmexposure.hpp
 models/fmmlsmpricer.hpp
 models/fmmparametrization.hpp
+models/fmmxccyreduction.hpp
 models/forwardmarketmodel.hpp
 models/fmmgrid.hpp
 models/fmmirmodel.hpp
@@ -955,6 +958,7 @@ pricingengines/fddefaultableequityjumpdiffusionconvertiblebondengine.hpp
 pricingengines/fmmanalyticswaptionengine.hpp
 pricingengines/fmmlsmcallablebondengine.hpp
 pricingengines/fmmlsmmultilegoptionengine.hpp
+pricingengines/fmmlsmxccyreducedengine.hpp
 pricingengines/forwardenabledbondengine.hpp
 pricingengines/forwardriskyannuitystrike.hpp
 pricingengines/indexcdsoptionbaseengine.hpp

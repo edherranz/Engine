@@ -213,6 +213,7 @@ portfolio/builders/scriptedtrade.cpp
 portfolio/builders/swap.cpp
 portfolio/builders/swaption.cpp
 portfolio/builders/fmm.cpp
+portfolio/builders/fmmxccy.cpp
 portfolio/builders/utilities.cpp
 portfolio/builders/varianceswap.cpp
 portfolio/builders/yoycapfloor.cpp

@@ -21,8 +21,8 @@
     <Parameter name="continueOnError">false</Parameter>
   </Setup>
   <Markets>
-    <Parameter name="lgmcalibration">default</Parameter>
-    <Parameter name="fxcalibration">default</Parameter>
+    <Parameter name="lgmcalibration">inccy</Parameter>
+    <Parameter name="fxcalibration">inccy</Parameter>
     <Parameter name="pricing">default</Parameter>
     <Parameter name="simulation">default</Parameter>
   </Markets>

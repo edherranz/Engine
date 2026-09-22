@@ -17,6 +17,7 @@
 */
 
 #include <qle/cashflows/overnightindexedcoupon.hpp>
+#include <qle/instruments/rebatedexercise.hpp>
 #include <qle/pricingengines/fmmlsmmultilegoptionengine.hpp>
 
 #include <ql/cashflows/capflooredcoupon.hpp>
@@ -199,6 +200,7 @@ FmmCallableInstrument fmmMapMultiLegOption(const MultiLegOption::arguments& args
                                                                                   << " settlement dates for "
                                                                                   << noticeDates.size()
                                                                                   << " exercise dates");
+    std::vector<Size> exerciseIndex; // exercise-date index of every right (for the rebates)
     for (Size i = 0; i < noticeDates.size(); ++i) {
         const Date& dn = noticeDates[i];
         const Date& ds = settleDates[i];
@@ -209,6 +211,8 @@ FmmCallableInstrument fmmMapMultiLegOption(const MultiLegOption::arguments& args
         const Size settleIdx = std::max(noticeIdx, grid.index(ds, toleranceDays, "settlement date"));
         if (settleIdx >= inst.lastFlowIdx)
             continue; // entry at or after the last flow has no value
+        if (!inst.rights.empty() && noticeIdx <= inst.rights.back().noticeIdx)
+            continue; // notice indices strictly ascending (duplicates after mapping are collapsed)
         for (const auto& f : inst.compoundedFloats)
             QL_REQUIRE(!(f.startIdx < settleIdx && f.payIdx > settleIdx),
                        "fmmMapMultiLegOption: settlement date "
@@ -216,13 +220,34 @@ FmmCallableInstrument fmmMapMultiLegOption(const MultiLegOption::arguments& args
                            << grid.dates()[f.endIdx] << "); whole-period exercise required");
         inst.rights.push_back({noticeIdx, settleIdx, 0.0});
         usedSettle.push_back(ds);
+        exerciseIndex.push_back(i);
     }
-    // notice indices strictly ascending (duplicates after mapping are collapsed)
-    std::vector<FmmCallableInstrument::Right> rights;
-    for (const auto& r : inst.rights)
-        if (rights.empty() || r.noticeIdx > rights.back().noticeIdx)
-            rights.push_back(r);
-    inst.rights = rights;
+    // exercise rebates (ORE's exercise fees with the sign flipped: a positive rebate is received
+    // by the option holder), paid on the settlement date in the instrument's currency
+    if (auto rebated = QuantLib::ext::dynamic_pointer_cast<RebatedExercise>(args.exercise)) {
+        const Currency modelCcy = args.currency.empty() ? Currency() : args.currency.front();
+        for (Size k = 0; k < inst.rights.size(); ++k) {
+            const Date& dn = noticeDates[exerciseIndex[k]];
+            bool any = false;
+            for (Size no = 0; no < rebated->rebateCurrencies().size(); ++no) {
+                const Real reb = rebated->rebate(exerciseIndex[k], no);
+                if (reb == 0.0)
+                    continue;
+                const Currency& c = rebated->rebateCurrency(no);
+                QL_REQUIRE(c.empty() || modelCcy.empty() || c == modelCcy,
+                           "fmmMapMultiLegOption: rebate currency " << c.code() << " differs from the instrument currency "
+                                                                     << modelCcy.code());
+                inst.rights[k].feeFlow += reb;
+                any = true;
+            }
+            if (any) {
+                const Date payDate = rebated->rebatePaymentDate(dn);
+                QL_REQUIRE(grid.index(payDate, toleranceDays, "rebate payment date") == inst.rights[k].settleIdx,
+                           "fmmMapMultiLegOption: rebate payment date " << payDate << " is not the settlement date "
+                                                                        << usedSettle[k]);
+            }
+        }
+    }
     return inst;
 }
 

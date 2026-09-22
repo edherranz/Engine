@@ -53,7 +53,17 @@ QuantLib::ext::shared_ptr<FmmBuilder> fmmModelBuilder(const EngineBuilder* build
 /*! EngineParameters: TrainingPaths, ValuationPaths, TrainingSeed, ValuationSeed, TrainingSequence,
     ValuationSequence, BasisOrder, DualBound, DualOuterPaths, DualInnerPaths, DualSeed */
 QuantExt::FmmLsmEngineConfig fmmLsmEngineConfig(const EngineBuilder* builder,
-                                                const QuantLib::ext::shared_ptr<FmmBuilder>& fmmBuilder);
+                                                const QuantLib::ext::shared_ptr<FmmBuilder>& fmmBuilder,
+                                                const bool observeIrModel = true);
+
+/*! Hagan-reduced engine for a swaption on a two-currency swap (product types *Swaption_XCcy): the
+    fixed leg's currency is modelled, the overnight floating leg's currency telescoped away
+    (docs/A9_1_HAGAN_REDUCTION_PLAN.md). ModelParameter XccyMethod: Standard | Improved (default). */
+QuantLib::ext::shared_ptr<PricingEngine> fmmXccyReducedEngine(const EngineBuilder* builder, const std::string& id,
+                                                              const std::vector<std::string>& keys,
+                                                              const std::vector<Date>& dates,
+                                                              const std::vector<Date>& maturities,
+                                                              const std::vector<std::vector<Real>>& strikes);
 
 //! Bermudan / European swaptions on the FMM LSM engine
 class FmmLsmSwaptionEngineBuilder final : public SwaptionEngineBuilder {
@@ -61,7 +71,7 @@ public:
     FmmLsmSwaptionEngineBuilder()
         : SwaptionEngineBuilder("FMM", "LSM",
                                 {"EuropeanSwaption", "EuropeanSwaption_NonStandard", "BermudanSwaption",
-                                 "BermudanSwaption_NonStandard"}) {}
+                                 "BermudanSwaption_NonStandard", "EuropeanSwaption_XCcy", "BermudanSwaption_XCcy"}) {}
 
 private:
     QuantLib::ext::shared_ptr<PricingEngine>

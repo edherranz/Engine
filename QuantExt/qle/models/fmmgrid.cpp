@@ -17,6 +17,9 @@
 */
 
 #include <qle/models/fmmgrid.hpp>
+#include <ql/cashflows/floatingratecoupon.hpp>
+#include <cmath>
+#include <map>
 
 #include <sstream>
 
@@ -112,7 +115,8 @@ Size FmmGrid::index(const Date& d, const Natural toleranceDays, const std::strin
 }
 
 FmmSwapSpec fmmSwapSpecFromSwaption(const FmmGrid& grid, const Swaption::arguments& args, const Natural toleranceDays,
-                                    Real& strike, Option::Type& type, Real& nominal) {
+                                    Real& strike, Option::Type& type, Real& nominal,
+                                    const Handle<YieldTermStructure>& modelCurve) {
     QL_REQUIRE(args.swap, "fmmSwapSpecFromSwaption: swaption without underlying swap");
     QL_REQUIRE(args.exercise && args.exercise->dates().size() == 1,
                "fmmSwapSpecFromSwaption: a single (European) exercise date is required");
@@ -139,6 +143,30 @@ FmmSwapSpec fmmSwapSpecFromSwaption(const FmmGrid& grid, const Swaption::argumen
     for (Size c = 1; c < fixedDates.size(); ++c) {
         spec.fixedPayIndices.push_back(grid.index(fixedDates[c], toleranceDays, "fixed pay date"));
         spec.fixedAccruals.push_back(fdc.yearFraction(fixedDates[c - 1], fixedDates[c]));
+    }
+    // deterministic basis of the floating leg over the model curve: per coupon, the forward
+    // amount (rate including spread and gearing, times the accrual) less the model's par amount
+    // over the same grid period, P(T_start)/P(T_end) - 1 (LM2019 section 6.2 identity); zero for
+    // an RFR leg on its own discount curve
+    if (!modelCurve.empty()) {
+        std::map<Size, Real> basis;
+        for (const auto& cf : swap.floatingLeg()) {
+            auto cpn = QuantLib::ext::dynamic_pointer_cast<FloatingRateCoupon>(cf);
+            if (!cpn || cpn->date() <= grid.referenceDate())
+                continue;
+            const Size s = grid.index(cpn->accrualStartDate(), toleranceDays, "float accrual start");
+            const Size e = grid.index(cpn->accrualEndDate(), toleranceDays, "float accrual end");
+            const Size pay = grid.index(cpn->date(), toleranceDays, "float pay date");
+            QL_REQUIRE(e > s && pay >= e, "fmmSwapSpecFromSwaption: inconsistent floating coupon dates");
+            const Real par = modelCurve->discount(grid.times()[s]) / modelCurve->discount(grid.times()[e]) - 1.0;
+            const Real c = cpn->rate() * cpn->accrualPeriod() - par;
+            if (std::fabs(c) > 1e-12)
+                basis[pay] += c;
+        }
+        for (const auto& kv : basis) {
+            spec.basisPayIndices.push_back(kv.first);
+            spec.basisAmounts.push_back(kv.second);
+        }
     }
     try {
         spec.validate(grid.numberOfRates());

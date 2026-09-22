@@ -1,0 +1,52 @@
+<?xml version="1.0"?>
+<!-- FMM challenger on the cancellable cross-currency swap: Hagan's reduction (Callable X-CCY Swap,
+     sections 1.1-1.2, 3): the EUR fixed leg's currency is modelled by an EUR FMM on the EUR pricing
+     discount curve (USD collateral by default), the USD-SOFR floating leg is telescoped away and its
+     spread stream converted with today's forward FX; the EUR FMM is bootstrapped, per cancellation
+     date, to the coterminal EUR swaption at the strike R_fix - s_eq (eq. 3.3a) with the market
+     normal volatility of eq. 3.41 (XccyMethod Improved; Standard uses the market vol at that
+     strike). Three factors, displaced diffusion with the 1/tau shift, LSM with the dual bound. -->
+<PricingEngines>
+  <Product type="Swap">
+    <Model>DiscountedCashflows</Model>
+    <ModelParameters/>
+    <Engine>DiscountingSwapEngine</Engine>
+    <EngineParameters/>
+  </Product>
+  <Product type="CrossCurrencySwap">
+    <Model>DiscountedCashflows</Model>
+    <ModelParameters/>
+    <Engine>DiscountingCrossCurrencySwapEngine</Engine>
+    <EngineParameters/>
+  </Product>
+  <Product type="BermudanSwaption_XCcy">
+    <Model>FMM</Model>
+    <ModelParameters>
+      <Parameter name="Calibration">Bootstrap</Parameter>
+      <Parameter name="CalibrationStrategy">CoterminalDealStrike</Parameter>
+      <Parameter name="XccyMethod">Standard</Parameter>
+      <Parameter name="Tolerance">0.20</Parameter>
+      <Parameter name="Volatility">0.0075</Parameter>
+      <Parameter name="VolatilityType">DisplacedDiffusion</Parameter>
+      <Parameter name="Shift">1/tau</Parameter>
+      <Parameter name="RhoInf">0.6</Parameter>
+      <Parameter name="Beta">0.08</Parameter>
+      <Parameter name="Factors">3</Parameter>
+      <Parameter name="ApproximationMethod">EffectiveShift</Parameter>
+      <Parameter name="Grid">3M</Parameter>
+      <!-- the EUR swaption helpers start two TARGET business days after the notice date -->
+      <Parameter name="GridToleranceDays">5</Parameter>
+    </ModelParameters>
+    <Engine>LSM</Engine>
+    <EngineParameters>
+      <Parameter name="TrainingPaths">32768</Parameter>
+      <Parameter name="ValuationPaths">32768</Parameter>
+      <Parameter name="TrainingSeed">42</Parameter>
+      <Parameter name="ValuationSeed">424242</Parameter>
+      <Parameter name="BasisOrder">2</Parameter>
+      <Parameter name="DualBound">true</Parameter>
+      <Parameter name="DualOuterPaths">512</Parameter>
+      <Parameter name="DualInnerPaths">64</Parameter>
+    </EngineParameters>
+  </Product>
+</PricingEngines>

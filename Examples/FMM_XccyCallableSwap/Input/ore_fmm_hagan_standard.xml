@@ -1,12 +1,12 @@
 <?xml version="1.0"?>
-<!-- Stock ORE valuation of the cancellable cross-currency swap template (CrossAssetModel MC for the
-     cancellation right, see pricingengine_cam_v200k4.xml). Market: Products 2025-02-10 plus the template's
+<!-- FMM valuation of the cancellable cross-currency swap template (Hagan reduction, standard method, for the
+     cancellation right, see pricingengine_fmm_hagan_standard.xml). Market: Products 2025-02-10 plus the template's
      synthetic correlations. -->
 <ORE>
   <Setup>
     <Parameter name="asofDate">2025-02-10</Parameter>
     <Parameter name="inputPath">Input</Parameter>
-    <Parameter name="outputPath">Output/cam_reduced_v200k4</Parameter>
+    <Parameter name="outputPath">Output/fmm_hagan_standard</Parameter>
     <Parameter name="logFile">log.txt</Parameter>
     <Parameter name="logMask">15</Parameter>
     <Parameter name="marketDataFile">../../Products/Input/marketdata.csv,marketdata_xccy.csv</Parameter>
@@ -15,8 +15,8 @@
     <Parameter name="curveConfigFile">../../Products/Input/curveconfig.xml,curveconfig_xccy.xml</Parameter>
     <Parameter name="conventionsFile">../../Products/Input/conventions.xml</Parameter>
     <Parameter name="marketConfigFile">todaysmarket.xml</Parameter>
-    <Parameter name="pricingEnginesFile">pricingengine_cam_v200k4.xml</Parameter>
-    <Parameter name="portfolioFile">portfolio_reduced.xml</Parameter>
+    <Parameter name="pricingEnginesFile">pricingengine_fmm_hagan_standard.xml</Parameter>
+    <Parameter name="portfolioFile">portfolio.xml</Parameter>
     <Parameter name="observationModel">None</Parameter>
     <Parameter name="continueOnError">false</Parameter>
   </Setup>

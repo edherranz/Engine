@@ -39,12 +39,17 @@ using namespace QuantLib;
 
 class ForwardMarketModel;
 
-//! on-grid swap: float leg pays tau_j R_j at T_j for j in (a, b]; fixed leg pays
-//! fixedAccruals[c] * K at T_{fixedPayIndices[c]}, indices strictly increasing within (a, b]
+//! on-grid swap: float leg pays tau_j R_j at T_j for j in (a, b] plus, optionally, deterministic
+//! basis amounts basisAmounts[c] (per unit notional) at T_{basisPayIndices[c]}: a term-rate
+//! floating leg (EURIBOR over ESTR, say) is the RFR par leg plus its time-0 forward basis, frozen
+//! (FMM_SPEC.md section 7.4, deterministic basis); fixed leg pays fixedAccruals[c] * K at
+//! T_{fixedPayIndices[c]}; all indices strictly increasing within (a, b]
 struct FmmSwapSpec {
     Size a = 0, b = 0;
     std::vector<Size> fixedPayIndices;
     std::vector<Real> fixedAccruals;
+    std::vector<Size> basisPayIndices;
+    std::vector<Real> basisAmounts;
     void validate(const Size M) const;
 };
 

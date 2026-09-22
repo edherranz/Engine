@@ -2,8 +2,10 @@
 <!-- Two-currency market for the cancellable cross-currency swap template on the Products 2025-02-10
      data set: USD discounted and projected on SOFR, EUR discounted on ESTR with the EURIBOR
      forwarding curves behind the EUR swaption surface (the EUR swap index family EUR-CMS-* is
-     EURIBOR based), the EUR/USD spot and volatility surface, and three synthetic rate/FX
-     correlations (curve configuration curveconfig_xccy.xml, quotes marketdata_xccy.csv). -->
+     EURIBOR based), the EUR/USD spot and volatility surface, and the rate/FX correlations of Hagan's
+     sizing example (curve configuration curveconfig_xccy.xml, quotes marketdata_xccy.csv; the low
+     FX/EUR-rate scenario in marketdata_xccy_rhofxb_low.csv). Two views: default = USD collateral,
+     inccy = in-currency discounting. -->
 <TodaysMarket>
   <Configuration id="default">
     <DiscountingCurvesId>default</DiscountingCurvesId>
@@ -16,9 +18,10 @@
     <CorrelationsId>default</CorrelationsId>
     <YieldCurvesId>default</YieldCurvesId>
   </Configuration>
-  <!-- the cross-currency swap engine asks for the in-currency discounting configuration: same curves -->
+  <!-- in-currency view (EUR discounted on ESTR): the LGM / FMM calibration configuration and the
+       alternative pricing view (switch the ore.xml Markets/pricing parameter to inccy) -->
   <Configuration id="inccy">
-    <DiscountingCurvesId>default</DiscountingCurvesId>
+    <DiscountingCurvesId>inccy</DiscountingCurvesId>
     <IndexForwardingCurvesId>default</IndexForwardingCurvesId>
     <SwapIndexCurvesId>default</SwapIndexCurvesId>
     <SwaptionVolatilitiesId>default</SwaptionVolatilitiesId>
@@ -28,7 +31,13 @@
     <CorrelationsId>default</CorrelationsId>
     <YieldCurvesId>default</YieldCurvesId>
   </Configuration>
+  <!-- default = USD collateral: the EUR leg discounts on the EUR-in-USD curve (built from the EUR/USD
+       forwards, so the FX forwards implied by the two discount curves are the market ones) -->
   <DiscountingCurves id="default">
+    <DiscountingCurve currency="USD">Yield/USD/USD-SOFR</DiscountingCurve>
+    <DiscountingCurve currency="EUR">Yield/EUR/EUR-IN-USD</DiscountingCurve>
+  </DiscountingCurves>
+  <DiscountingCurves id="inccy">
     <DiscountingCurve currency="USD">Yield/USD/USD-SOFR</DiscountingCurve>
     <DiscountingCurve currency="EUR">Yield/EUR/EUR-ESTER</DiscountingCurve>
   </DiscountingCurves>

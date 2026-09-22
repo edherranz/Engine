@@ -37,6 +37,7 @@ equitytrades.cpp
 expiry.cpp
 fittedbondcurve.cpp
 fmm.cpp
+fmmxccy.cpp
 fixings.cpp
 formulaparser.cpp
 fxaccumulator.cpp

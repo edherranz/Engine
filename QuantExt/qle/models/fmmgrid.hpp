@@ -81,9 +81,13 @@ private:
 //! swap spec of the underlying of a physically settled swaption on the grid: expiry = exercise
 //! date, float leg = grid periods (a, b], fixed leg from the swap's fixed pay dates and coupon
 //! accruals (recovered from the coupon amounts, nominal and rate). Rejects mid-period exercise
-//! and fixed/float dates off the grid beyond the tolerance.
+//! and fixed/float dates off the grid beyond the tolerance. With a model curve, the floating
+//! leg's time-0 forward basis over that curve (a term-rate index such as EURIBOR, or a payment
+//! convention, against the grid's par RFR leg) is recorded as deterministic basis amounts, so that
+//! the model's forward swap rate equals the helper's market forward discounted on the model curve.
 FmmSwapSpec fmmSwapSpecFromSwaption(const FmmGrid& grid, const Swaption::arguments& args, const Natural toleranceDays,
-                                    Real& strike, Option::Type& type, Real& nominal);
+                                    Real& strike, Option::Type& type, Real& nominal,
+                                    const Handle<YieldTermStructure>& modelCurve = Handle<YieldTermStructure>());
 
 } // namespace QuantExt
 

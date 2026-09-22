@@ -26,24 +26,43 @@ of the fee mechanism and of the telescoping identity inside ORE's engine).
 
 ## Market (`Input/todaysmarket.xml`, Products 2025-02-10 data)
 
-USD discounted and projected on SOFR; EUR discounted on ESTR, EURIBOR forwarding curves behind
-the EUR swaption surface (ORE's EUR swap index family is EURIBOR based, the standard EUR
-floating coupon, discounted on the overnight curve); EUR/USD spot and volatility surface; three
-synthetic rate/FX correlations (`Input/curveconfig_xccy.xml`, `Input/marketdata_xccy.csv`:
-rate/rate 0.5, FX/USD rate -0.2, FX/EUR rate 0.2, plus aliases for the label ORE uses when the
-USD leg is fixed). Both curve configurations and both market data files are passed as
-comma-separated lists in the run files.
+USD discounted and projected on SOFR. EUR: the default pricing configuration discounts the EUR
+leg on `EUR-IN-USD` (USD collateral, the market's cross-currency basis), the `inccy`
+configuration on ESTR (in-currency view; the LGM / FMM calibration configuration, and the
+alternative pricing view through `Markets/pricing` in the run files). EURIBOR forwarding curves
+sit behind the EUR swaption surface (ORE's EUR swap index family is EURIBOR based, the standard
+EUR floating coupon, discounted on the overnight curve); EUR/USD spot and volatility surface.
+Correlations (`Input/curveconfig_xccy.xml`, quotes `Input/marketdata_xccy.csv`): Hagan's sizing
+values, rate/rate 0.25 and FX/EUR-rate +0.25 in Hagan's convention (F^{A/B} = EUR per USD), which
+is -0.25 for ORE's `FX-GENERIC-EUR-USD` (USD per EUR); FX/USD-rate 0. The low scenario
+(FX/EUR-rate -0.25 in Hagan's convention) is `Input/marketdata_xccy_rhofxb_low.csv`; swap the
+file name in the run file's `marketDataFile` list to use it, or edit the values. Aliases exist for
+the label ORE uses when the USD leg is fixed (`USD-FedFunds`). Both curve configurations and both
+market data files are passed as comma-separated lists.
 
 ## Runs
 
 - `Input/ore_cam.xml`: stock ORE comparator, `BermudanSwaption_XCcy` on the CrossAssetModel
   (`Model` LGM, `Engine` MC in `Input/pricingengine_cam.xml`: one-factor LGM per currency
-  bootstrapped to coterminal ATM swaptions, lognormal FX bootstrapped to ATM-forward EUR/USD
-  options on the exercise dates, Longstaff-Schwartz with 50,000 training and 50,000 pricing
-  paths, regression order 4).
-- `Input/ore_cam_reduced.xml`: the telescoped representation on the same model.
-- FMM runs (Hagan reduction on an EUR-ESTR FMM, joint USD/EUR FMM with FX) are added by A9.1 and
-  A9.5; see `docs/A9_XCCY_TEMPLATE_PLAN.md`.
+  bootstrapped to coterminal ATM swaptions on the in-currency view, lognormal FX bootstrapped to
+  ATM-forward EUR/USD options on the exercise dates, Longstaff-Schwartz with 50,000 training and
+  50,000 pricing paths, regression order 4).
+- `Input/ore_cam_reduced.xml`: the telescoped representation on the same model; the variants
+  `ore_cam_reduced_v200k4.xml` / `_v400k6.xml` with more paths and a higher regression order.
+  The comparator of record is the telescoped representation at 200,000 paths averaged over ten
+  seed pairs (`docs/A9_XCCY_TEMPLATE_PLAN.md` section 4).
+- `Input/ore_fmm_hagan.xml`: the FMM challenger, Hagan's reduction with the improved method
+  (`Input/pricingengine_fmm_hagan.xml`: `BermudanSwaption_XCcy` with `Model` FMM, `Engine` LSM,
+  `XccyMethod` Improved); `Input/ore_fmm_hagan_standard.xml` the standard method. Additional
+  results `fmmXccy*` report the equivalent spreads, strikes, market and effective volatilities,
+  the correlations in Hagan's convention, the annuity / convexity ratios and the omitted-effect
+  scale, next to the `fmm*` LSM statistics (in EUR, the modelled currency) and the calibration
+  record.
+
+Results (2026-09-22, `validation/a9_xccy_compare.py`; USD): cancellation right on the
+CrossAssetModel 156,976 +/- 552 (seed mean), FMM improved method 152,864 +/- 1,349 (LSM lower
+bound) to 153,929 +/- 1,366 (dual upper bound), standard method 151,751 to 152,796; the swap
++17,613. Details and the reduction diagnostics: `docs/A9_XCCY_TEMPLATE_PLAN.md` section 9.
 
 Run `python run.py` inside the environment that holds the fork Python package (the runs go
-through `ORE.OREApp`, no executable).
+through `ORE.OREApp`, no executable); `python run.py fmm` runs the FMM variants only.

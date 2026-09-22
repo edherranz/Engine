@@ -38,6 +38,7 @@
 #include <ql/any.hpp>
 
 #include <map>
+#include <set>
 
 namespace ore {
 namespace data {
@@ -81,6 +82,18 @@ public:
     //! the IrModel adapter (observable: notifies after each recalibration)
     QuantLib::ext::shared_ptr<QuantExt::FmmIrModel> irModel() const;
     const FmmCalibrationInfo& calibrationInfo() const { return info_; }
+    //! the trade's contractual dates supplied at pricing time (cross-currency engine): the model
+    //! grid is rebuilt when they change and the model recalibrated
+    void setGridDates(const std::set<Date>& dates);
+    //! the model grid (parametrization initialised) without calibrating
+    QuantLib::ext::shared_ptr<QuantExt::FmmGrid> prepareGrid() const;
+    //! per basket helper, in basket order: (strike, target normal vol) replacing the helper's own
+    //! (the trade-level calibration of Hagan's reduced cross-currency pricing); empty = none
+    void setTargetOverrides(const std::vector<std::pair<Real, Real>>& overrides);
+    //! expiry dates of the basket helpers, in basket order
+    std::vector<Date> basketExpiryDates() const;
+    //! observe a market object so that its changes trigger a recalibration
+    void addObservable(const QuantLib::ext::shared_ptr<Observable>& o) { marketObserver_->addObservable(o); }
 
 private:
     void initParametrization() const override;
@@ -95,6 +108,7 @@ private:
     mutable QuantLib::ext::shared_ptr<QuantExt::ForwardMarketModel> fmm_;
     mutable QuantLib::ext::shared_ptr<QuantExt::FmmIrModel> irModel_;
     mutable FmmCalibrationInfo info_;
+    std::vector<std::pair<Real, Real>> targetOverrides_;
 };
 
 } // namespace data

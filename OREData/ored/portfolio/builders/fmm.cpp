@@ -127,7 +127,8 @@ QuantLib::ext::shared_ptr<FmmBuilder> fmmModelBuilder(const EngineBuilder* build
 }
 
 QuantExt::FmmLsmEngineConfig fmmLsmEngineConfig(const EngineBuilder* builder,
-                                                const QuantLib::ext::shared_ptr<FmmBuilder>& fmmBuilder) {
+                                                const QuantLib::ext::shared_ptr<FmmBuilder>& fmmBuilder,
+                                                const bool observeIrModel) {
     FmmLsmEngineConfig cfg;
     cfg.lsm.trainingPaths = static_cast<Size>(parseInteger(builder->engineParameter("TrainingPaths", {}, false, "16384")));
     cfg.lsm.valuationPaths =
@@ -150,7 +151,12 @@ QuantExt::FmmLsmEngineConfig fmmLsmEngineConfig(const EngineBuilder* builder,
     cfg.policyMode = policyMode == "Frozen" ? FmmPolicyMode::Frozen : FmmPolicyMode::Retrain;
     cfg.gridToleranceDays =
         static_cast<Natural>(parseInteger(builder->modelParameter("GridToleranceDays", {}, false, "3")));
-    cfg.observables = {fmmBuilder->irModel()};
+    // the calibrated IrModel adapter notifies after each recalibration; the cross-currency engine
+    // calibrates lazily at pricing time and observes the builder itself instead
+    if (observeIrModel)
+        cfg.observables = {fmmBuilder->irModel()};
+    else
+        cfg.observables = {fmmBuilder};
     if (builder->generateAdditionalResults())
         cfg.calibrationResults = [fmmBuilder]() { return fmmBuilder->calibrationInfo().additionalResults(); };
     return cfg;
@@ -162,13 +168,15 @@ QuantLib::ext::shared_ptr<PricingEngine> FmmLsmSwaptionEngineBuilder::engineImpl
     const std::vector<std::vector<Real>>& fxStrikes, const bool isAmerican, const std::string& discountCurve,
     const std::string& securitySpread, const CamOrLgmModel& modelOverwrite) {
     DLOG("Building FMM LSM Swaption engine for trade " << id);
-    QL_REQUIRE(keys.size() == 1, "FmmLsmSwaptionEngineBuilder: multiple currencies are not supported");
     QL_REQUIRE(!isAmerican, "FmmLsmSwaptionEngineBuilder: American exercise is not supported");
     QL_REQUIRE(std::holds_alternative<std::monostate>(modelOverwrite),
                "FmmLsmSwaptionEngineBuilder: an externally supplied CAM / LGM model cannot be used with the FMM");
     QL_REQUIRE(discountCurve.empty() && securitySpread.empty(),
                "FmmLsmSwaptionEngineBuilder: a separate discount curve / security spread is not supported "
                "(single-curve baseline: the swap index discount curve is the model curve)");
+    if (keys.size() == 2)
+        return fmmXccyReducedEngine(this, id, keys, dates, maturities, strikes);
+    QL_REQUIRE(keys.size() == 1, "FmmLsmSwaptionEngineBuilder: " << keys.size() << " currency keys are not supported");
     FmmModelRequest req;
     req.id = id;
     req.key = keys.front();

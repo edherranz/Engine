@@ -63,6 +63,7 @@ fddefaultableequityjumppdiffusionconvertiblebondengine.cpp
 fillemptymatrix.cpp
 fmm.cpp
 fmmexposure.cpp
+fmmxccy.cpp
 formulabasedcoupon.cpp
 forwardbond.cpp
 fxvolsmile.cpp

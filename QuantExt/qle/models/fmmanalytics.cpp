@@ -31,6 +31,13 @@ Real discount(const FmmParametrization& p, const Size m) {
 Real initialRate(const FmmParametrization& p, const Size j) {
     return (discount(p, j - 1) / discount(p, j) - 1.0) / p.tau(j);
 }
+// time-0 value of the deterministic basis amounts of the floating leg (per unit notional)
+Real basisValue(const FmmParametrization& p, const FmmSwapSpec& swap) {
+    Real v = 0.0;
+    for (Size c = 0; c < swap.basisPayIndices.size(); ++c)
+        v += swap.basisAmounts[c] * discount(p, swap.basisPayIndices[c]);
+    return v;
+}
 
 // time-0 geometry shared by the approximations: annuity, forward, exact gradient q_i = dS/dR_i,
 // local-vol factors phi_i at time-0 rates and the integrated covariances IC_ik over [0, T_a]
@@ -48,20 +55,24 @@ SwaptionGeometry geometry(const FmmParametrization& p, const FmmSwapSpec& swap) 
     g.b = swap.b;
     const Real Pa = discount(p, swap.a), Pb = discount(p, swap.b);
     g.A = fmmAnnuity(p, swap);
-    g.S0 = (Pa - Pb) / g.A;
-    // exact gradient q_i = dS/dR_i at t = 0. With c_i = tau_i/(1 + tau_i R_i(0)) and
-    // A_i = sum of fixed-leg PVs paying at or after T_i:
-    //   q_i = c_i [ (Pb 1_{i<=b} - Pa 1_{i<=a}) / A + S0 A_i / A ]
+    g.S0 = (Pa - Pb + basisValue(p, swap)) / g.A;
+    // exact gradient q_i = dS/dR_i at t = 0. With c_i = tau_i/(1 + tau_i R_i(0)),
+    // A_i = sum of fixed-leg PVs paying at or after T_i and B_i = sum of basis PVs paying at or
+    // after T_i (dP_j/dR_i = -c_i P_j for i <= j):
+    //   q_i = c_i [ (Pb 1_{i<=b} - Pa 1_{i<=a} - B_i) / A + S0 A_i / A ]
     // which vanishes identically for i <= a (front discounting cancels in S).
     g.q.assign(g.b + 1, 0.0);
     g.phi.assign(g.b + 1, 0.0);
     for (Size i = swap.a + 1; i <= g.b; ++i) {
         const Real ci = p.tau(i) / (1.0 + p.tau(i) * initialRate(p, i));
-        Real Ai = 0.0;
+        Real Ai = 0.0, Bi = 0.0;
         for (Size c = 0; c < swap.fixedPayIndices.size(); ++c)
             if (swap.fixedPayIndices[c] >= i)
                 Ai += swap.fixedAccruals[c] * discount(p, swap.fixedPayIndices[c]);
-        g.q[i] = ci * (Pb / g.A + g.S0 * Ai / g.A);
+        for (Size c = 0; c < swap.basisPayIndices.size(); ++c)
+            if (swap.basisPayIndices[c] >= i)
+                Bi += swap.basisAmounts[c] * discount(p, swap.basisPayIndices[c]);
+        g.q[i] = ci * ((Pb - Bi) / g.A + g.S0 * Ai / g.A);
         g.phi[i] = p.phi(i, initialRate(p, i));
     }
     // time integrals exact and decay-aware up to the expiry T_a (the rho^eff factor sits inside
@@ -86,6 +97,13 @@ void FmmSwapSpec::validate(const Size M) const {
         QL_REQUIRE(c == 0 || fixedPayIndices[c] > fixedPayIndices[c - 1],
                    "FmmSwapSpec: fixed pay indices must be strictly increasing");
         QL_REQUIRE(fixedAccruals[c] > 0.0, "FmmSwapSpec: non-positive fixed accrual");
+    }
+    QL_REQUIRE(basisPayIndices.size() == basisAmounts.size(), "FmmSwapSpec: inconsistent basis flows");
+    for (Size c = 0; c < basisPayIndices.size(); ++c) {
+        QL_REQUIRE(basisPayIndices[c] > a && basisPayIndices[c] <= b,
+                   "FmmSwapSpec: basis pay index " << basisPayIndices[c] << " outside (a, b]");
+        QL_REQUIRE(c == 0 || basisPayIndices[c] > basisPayIndices[c - 1],
+                   "FmmSwapSpec: basis pay indices must be strictly increasing");
     }
 }
 
@@ -120,7 +138,7 @@ Real fmmCapletNormalVol(const FmmParametrization& p, const Size j, const Real K,
 
 Real fmmForwardSwapRate(const FmmParametrization& p, const FmmSwapSpec& swap) {
     swap.validate(p.numberOfRates());
-    return (discount(p, swap.a) - discount(p, swap.b)) / fmmAnnuity(p, swap);
+    return (discount(p, swap.a) - discount(p, swap.b) + basisValue(p, swap)) / fmmAnnuity(p, swap);
 }
 
 Real fmmAnnuity(const FmmParametrization& p, const FmmSwapSpec& swap) {
@@ -225,7 +243,11 @@ std::vector<FmmSwaptionMcResult> fmmSwaptionMc(const QuantLib::ext::shared_ptr<F
                 Real A = 0.0;
                 for (Size c = 0; c < swaps[sw].fixedPayIndices.size(); ++c)
                     A += swaps[sw].fixedAccruals[c] * model->discountBond(st, p.rateTime(swaps[sw].fixedPayIndices[c]));
-                const Real S = (1.0 - model->discountBond(st, p.rateTime(swaps[sw].b))) / A;
+                Real basis = 0.0;
+                for (Size c = 0; c < swaps[sw].basisPayIndices.size(); ++c)
+                    basis += swaps[sw].basisAmounts[c] *
+                             model->discountBond(st, p.rateTime(swaps[sw].basisPayIndices[c]));
+                const Real S = (1.0 - model->discountBond(st, p.rateTime(swaps[sw].b)) + basis) / A;
                 acc[sw].add(A * std::max(w * (S - strikes[sw]), 0.0) / bank);
             }
         }
